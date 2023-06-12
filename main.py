@@ -1,3 +1,11 @@
+"""
+This is a modified version of a codebase taken from CGCNN:
+https://github.com/txie-93/cgcnn
+
+We thank them for the excellent codebase.
+
+"""
+
 import argparse
 import os
 import shutil
@@ -15,8 +23,7 @@ from torch.autograd import Variable
 from torch.optim.lr_scheduler import MultiStepLR
 
 from data import *
-from model import PDDNet
-
+from model import PeriodicSetTransformer, PDDNet2
 
 parser = argparse.ArgumentParser(description='Pointwise Distance Distribution Network')
 parser.add_argument('data_options', metavar='OPTIONS', nargs='+',
@@ -26,23 +33,23 @@ parser.add_argument('--disable-cuda', action='store_true',
                     help='Disable CUDA')
 parser.add_argument('-j', '--workers', default=0, type=int, metavar='N',
                     help='number of data loading workers (default: 0)')
-parser.add_argument('--epochs', default=30, type=int, metavar='N',
+parser.add_argument('--epochs', default=200, type=int, metavar='N',
                     help='number of total epochs to run (default: 30)')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 parser.add_argument('-b', '--batch-size', default=64, type=int,
                     metavar='N', help='mini-batch size (default: 256)')
-parser.add_argument('--lr', '--learning-rate', default=0.01, type=float,
+parser.add_argument('--lr', '--learning-rate', default=0.0001, type=float,
                     metavar='LR', help='initial learning rate (default: '
                                        '0.01)')
-parser.add_argument('--lr-milestones', default=[100], nargs='+', type=int,
+parser.add_argument('--lr-milestones', default=[75, 150, 200], nargs='+', type=int,
                     metavar='N', help='milestones for scheduler (default: '
                                       '[100])')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
 parser.add_argument('--weight-decay', '--wd', default=0, type=float,
                     metavar='W', help='weight decay (default: 0)')
-parser.add_argument('--print-freq', '-p', default=10, type=int,
+parser.add_argument('--print-freq', '-p', default=50, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
@@ -65,14 +72,16 @@ test_group.add_argument('--test-size', default=None, type=int, metavar='N',
                         help='number of test data to be loaded (default 1000)')
 parser.add_argument('--optim', default='SGD', type=str, metavar='SGD',
                     help='choose an optimizer, SGD or Adam, (default: SGD)')
-parser.add_argument('--fea-len', default=32, type=int, metavar='N',
+parser.add_argument('--fea-len', default=64, type=int, metavar='N',
                     help='size of the initial embedding')
-parser.add_argument('--num-encoders', default=3, type=int, metavar='N',
+parser.add_argument('--num-encoders', default=4, type=int, metavar='N',
                     help='number of encoder layers')
 parser.add_argument('--num-decoder', default=1, type=int, metavar='N',
                     help='number of decoder layers')
-parser.add_argument('--num-heads', default=3, type=int, metavar='N',
+parser.add_argument('--num-heads', default=2, type=int, metavar='N',
                     help='number of attention heads')
+parser.add_argument('--composition', default=True, type=bool, metavar='N',
+                    help='use atomic composition')
 
 args = parser.parse_args(sys.argv[1:])
 
@@ -83,7 +92,7 @@ best_mae_error = 1e10
 
 def main():
     global args, best_mae_error
-    dataset = LatticeEnergyData(*args.data_options)
+    dataset = PDDData(*args.data_options)
 
     collate_fn = collate_pool
     train_loader, val_loader, test_loader = get_train_val_test_loader(
@@ -113,17 +122,17 @@ def main():
 
     # build model
     orig_atom_fea_len = dataset[0][0].shape[-1]
-    model = PDDNet(orig_atom_fea_len,
-                   args.fea_len,
-                   num_heads=args.num_heads,
-                   n_encoders=args.num_encoders,
-                   decoder_layers=args.num_decoder)
+    model = PeriodicSetTransformer(orig_atom_fea_len,
+                                   args.fea_len,
+                                   num_heads=args.num_heads,
+                                   n_encoders=args.num_encoders,
+                                   decoder_layers=args.num_decoder,
+                                   composition=args.composition)
 
     if args.cuda:
         model.cuda()
 
-    # define loss func and optimizer
-    criterion = nn.MSELoss()
+    criterion = nn.L1Loss()
 
     if args.optim == 'SGD':
         optimizer = optim.SGD(model.parameters(), args.lr,

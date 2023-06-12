@@ -1,3 +1,6 @@
+import csv
+import pickle
+
 import amd
 import pandas as pd
 import os
@@ -8,6 +11,9 @@ from torch.utils.data.sampler import SubsetRandomSampler
 from torch.nn.utils.rnn import pad_sequence
 import random
 import functools
+import numpy as np
+
+from pdd_helpers import custom_PDD
 
 random.seed(0)
 
@@ -78,15 +84,22 @@ def collate_pool(dataset_list):
 
 
 class LatticeEnergyData(Dataset):
-    def __init__(self, filepath, k=6, collapse_tol=1e-4, constrained=False, seed=123, shuffle=True):
+    def __init__(self, filepath, k=60, collapse_tol=1e-4, constrained=False, seed=123, shuffle=True):
         periodic_sets = []
         if isinstance(filepath, list):
             for fp in filepath:
                 r = amd.CifReader(fp)
                 periodic_sets += [i for i in r]
         else:
-            reader = amd.CifReader(filepath)
-            periodic_sets = [i for j, i in enumerate(reader)]
+            cached_data = "./data/" + os.path.basename(filepath) + "_raw_data"
+            if os.path.exists(cached_data):
+                with open(cached_data, "rb") as f:
+                    periodic_sets = pickle.load(f)
+            else:
+                reader = amd.CifReader(filepath)
+                periodic_sets = [i for j, i in enumerate(reader)]
+                with open(cached_data, "wb") as f:
+                    pickle.dump(periodic_sets, f)
 
         assert os.path.exists(filepath), 'CIF file does not exist!'
         self.k = k
@@ -97,7 +110,15 @@ class LatticeEnergyData(Dataset):
             random.shuffle(periodic_sets)
         self.ids = [ps.name for ps in periodic_sets]
         self.energies = [float(i.split("_")[0]) for i in self.ids]
-        self.pdds = [amd.PDD(ps, k=self.k, collapse_tol=collapse_tol) for ps in periodic_sets]
+        pdds = [amd.PDD(ps, k=self.k, collapse_tol=collapse_tol) for ps in periodic_sets]
+        indices_to_keep = [i for i, pdd in enumerate(pdds) if pdd.shape[0] < 500]
+        print("Keeping " + str(len(indices_to_keep)) + " / " + str(len(periodic_sets)) + " = " + str(len(indices_to_keep) / len(periodic_sets)))
+        self.energies = [self.energies[i] for i in indices_to_keep]
+        self.ids = [self.ids[i] for i in indices_to_keep]
+        pdds = [pdds[i] for i in indices_to_keep]
+        min_pdd = np.min(np.vstack([np.min(pdd, axis=0) for pdd in pdds]), axis=0)
+        max_pdd = np.max(np.vstack([np.max(pdd, axis=0) for pdd in pdds]), axis=0)
+        self.pdds = [np.hstack([pdd[:, 0, None], (pdd[:, 1:] - min_pdd[1:]) / (max_pdd[1:] - min_pdd[1:])]) for pdd in pdds]
 
     def __len__(self):
         return len(self.pdds)
@@ -107,3 +128,89 @@ class LatticeEnergyData(Dataset):
         return torch.Tensor(self.pdds[idx]), \
             torch.Tensor([float(self.energies[idx])]), \
             self.ids[idx]
+
+
+class PDDData(Dataset):
+    def __init__(self, filepath, k=60, collapse_tol=1e-4, composition=True, constrained=True, seed=123):
+        self.filepath = filepath
+        assert os.path.exists(filepath), 'root_dir does not exist!'
+        id_prop_file = os.path.join(self.filepath, 'id_prop.csv')
+        assert os.path.exists(id_prop_file), 'id_prop.csv does not exist!'
+        with open(id_prop_file) as f:
+            reader = csv.reader(f)
+            self.id_prop_data = [row for row in reader]
+        random.seed(seed)
+        random.shuffle(self.id_prop_data)
+        self.k = k
+        random.seed(seed)
+        self.collapse_tol = float(collapse_tol)
+        self.constrained = constrained
+        self.composition = composition
+
+    def __len__(self):
+        return len(self.id_prop_data)
+
+    @functools.lru_cache(maxsize=None)  # Cache loaded structures
+    def __getitem__(self, idx):
+        cif_id, target = self.id_prop_data[idx]
+        reader = amd.CifReader(os.path.join(self.filepath, cif_id + '.cif'))
+        ps = reader.read()
+        pdd, groups, inds, _ = custom_PDD(ps, k=self.k, collapse=True, collapse_tol=self.collapse_tol,
+                                          constrained=self.constrained, lexsort=False)
+
+        if self.composition:
+            indices_in_graph = [i[0] for i in groups]
+            atom_features = ps.types[indices_in_graph][:, None]
+            pdd = np.hstack([pdd, atom_features])
+            return torch.Tensor(pdd), \
+                   torch.Tensor([float(target)]), \
+                   cif_id
+        else:
+            pdd = amd.PDD(ps, k=self.k, collapse_tol=self.collapse_tol)
+            return torch.Tensor(pdd), \
+                torch.Tensor([float(target)]), \
+                cif_id
+
+
+class PDDData2(Dataset):
+    def __init__(self, filepath, k=60, collapse_tol=1e-4, composition=True, constrained=True, seed=123):
+        self.filepath = filepath
+        assert os.path.exists(filepath), 'root_dir does not exist!'
+        id_prop_file = os.path.join(self.filepath, 'id_prop.csv')
+        assert os.path.exists(id_prop_file), 'id_prop.csv does not exist!'
+        with open(id_prop_file) as f:
+            reader = csv.reader(f)
+            self.id_prop_data = [row for row in reader]
+        random.seed(seed)
+        random.shuffle(self.id_prop_data)
+        self.k = k
+        self.collapse_tol = float(collapse_tol)
+        self.constrained = constrained
+        self.composition = composition
+        pdds = []
+        i = 0
+        for cif in self.id_prop_data:
+            print(i)
+            i += 1
+            reader = amd.CifReader(os.path.join(self.filepath, cif[0] + '.cif'))
+            ps = reader.read()
+            pdd, groups, inds, _ = custom_PDD(ps, k=self.k, collapse=True, collapse_tol=self.collapse_tol,
+                                              constrained=self.constrained, lexsort=False)
+            indices_in_graph = [i[0] for i in groups]
+            atom_features = ps.types[indices_in_graph][:, None]
+            pdd = np.hstack([pdd, atom_features])
+            pdds.append(pdd)
+            min_pdd = np.min(np.vstack([np.min(pdd, axis=0) for pdd in pdds]), axis=0)
+            max_pdd = np.max(np.vstack([np.max(pdd, axis=0) for pdd in pdds]), axis=0)
+            self.pdds = [np.hstack([pdd[:, 0, None], (pdd[:, 1:-1] - min_pdd[1:-1]) / (max_pdd[1:-1] - min_pdd[1:-1]), pdd[:, -1, None]]) for pdd
+                         in pdds]
+
+    def __len__(self):
+        return len(self.id_prop_data)
+
+    @functools.lru_cache(maxsize=None)  # Cache loaded structures
+    def __getitem__(self, idx):
+        cif_id, target = self.id_prop_data[idx]
+        return torch.Tensor(self.pdds[idx]), \
+               torch.Tensor([float(target)]), \
+               cif_id
