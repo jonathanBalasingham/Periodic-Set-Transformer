@@ -23,9 +23,9 @@ from torch.autograd import Variable
 from torch.optim.lr_scheduler import MultiStepLR
 
 from data import *
-from model import PeriodicSetTransformer, PDDNet2
+from model import PeriodicSetTransformer
 
-parser = argparse.ArgumentParser(description='Pointwise Distance Distribution Network')
+parser = argparse.ArgumentParser(description='Periodic Set Transformer')
 parser.add_argument('data_options', metavar='OPTIONS', nargs='+',
                     help='dataset options, started with the path to root dir, '
                          'then other options')
@@ -49,7 +49,7 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
 parser.add_argument('--weight-decay', '--wd', default=0, type=float,
                     metavar='W', help='weight decay (default: 0)')
-parser.add_argument('--print-freq', '-p', default=50, type=int,
+parser.add_argument('--print-freq', '-p', default=100, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
