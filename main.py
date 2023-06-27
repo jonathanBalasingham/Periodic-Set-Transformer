@@ -34,23 +34,23 @@ parser.add_argument('--disable-cuda', action='store_true',
 parser.add_argument('-j', '--workers', default=0, type=int, metavar='N',
                     help='number of data loading workers (default: 0)')
 parser.add_argument('--epochs', default=200, type=int, metavar='N',
-                    help='number of total epochs to run (default: 30)')
+                    help='number of total epochs to run (default: 200)')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('-b', '--batch-size', default=64, type=int,
-                    metavar='N', help='mini-batch size (default: 256)')
+parser.add_argument('-b', '--batch-size', default=32, type=int,
+                    metavar='N', help='mini-batch size (default: 32)')
 parser.add_argument('--lr', '--learning-rate', default=0.0001, type=float,
                     metavar='LR', help='initial learning rate (default: '
-                                       '0.01)')
+                                       '0.0001)')
 parser.add_argument('--lr-milestones', default=[75, 150, 200], nargs='+', type=int,
                     metavar='N', help='milestones for scheduler (default: '
-                                      '[100])')
+                                      '[75, 150, 200])')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
-parser.add_argument('--weight-decay', '--wd', default=0, type=float,
-                    metavar='W', help='weight decay (default: 0)')
+parser.add_argument('--weight-decay', '--wd', default=1e-5, type=float,
+                    metavar='W', help='weight decay (default: 1e-5)')
 parser.add_argument('--print-freq', '-p', default=100, type=int,
-                    metavar='N', help='print frequency (default: 10)')
+                    metavar='N', help='print frequency (default: 100)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
 train_group = parser.add_mutually_exclusive_group()
@@ -70,9 +70,9 @@ test_group.add_argument('--test-ratio', default=0.1, type=float, metavar='N',
                     help='percentage of test data to be loaded (default 0.1)')
 test_group.add_argument('--test-size', default=None, type=int, metavar='N',
                         help='number of test data to be loaded (default 1000)')
-parser.add_argument('--optim', default='SGD', type=str, metavar='SGD',
-                    help='choose an optimizer, SGD or Adam, (default: SGD)')
-parser.add_argument('--fea-len', default=64, type=int, metavar='N',
+parser.add_argument('--optim', default='Adam', type=str, metavar='Adam',
+                    help='choose an optimizer, SGD or Adam, (default: Adam)')
+parser.add_argument('--fea-len', default=128, type=int, metavar='N',
                     help='size of the initial embedding')
 parser.add_argument('--num-encoders', default=4, type=int, metavar='N',
                     help='number of encoder layers')
@@ -80,9 +80,11 @@ parser.add_argument('--num-decoder', default=1, type=int, metavar='N',
                     help='number of decoder layers')
 parser.add_argument('--num-heads', default=2, type=int, metavar='N',
                     help='number of attention heads')
-parser.add_argument('--composition', default=True, type=bool, metavar='N',
-                    help='use atomic composition')
 
+parser.add_argument('--disable-composition', action='store_true',
+                    help='Disable atomic composition')
+parser.add_argument('--disable-pdd-encoding', action='store_true',
+                    help='Disable PDD Encoding')
 args = parser.parse_args(sys.argv[1:])
 
 args.cuda = not args.disable_cuda and torch.cuda.is_available()
@@ -92,7 +94,14 @@ best_mae_error = 1e10
 
 def main():
     global args, best_mae_error
-    dataset = PDDData(*args.data_options)
+    components = []
+
+    if not args.disable_pdd_encoding:
+        components.append("pdd")
+    if not args.disable_composition:
+        components.append("composition")
+    print("Using Components: " + str(components))
+    dataset = PDDData2(*args.data_options)
 
     collate_fn = collate_pool
     train_loader, val_loader, test_loader = get_train_val_test_loader(
@@ -127,7 +136,7 @@ def main():
                                    num_heads=args.num_heads,
                                    n_encoders=args.num_encoders,
                                    decoder_layers=args.num_decoder,
-                                   composition=args.composition)
+                                   components=components)
 
     if args.cuda:
         model.cuda()
@@ -191,7 +200,9 @@ def main():
     print('---------Evaluate Model on Test Set---------------')
     best_checkpoint = torch.load('model_best.pth.tar')
     model.load_state_dict(best_checkpoint['state_dict'])
-    validate(test_loader, model, criterion, normalizer, test=True)
+    res = validate(test_loader, model, criterion, normalizer, test=True)
+    with open("./results.txt", "a") as f:
+        f.write(str(args.data_options) + " --> " + str(res) + "\n")
 
 
 def train(train_loader, model, criterion, optimizer, epoch, normalizer):
@@ -295,12 +306,13 @@ def validate(val_loader, model, criterion, normalizer, test=False):
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
-        print('Test: [{0}/{1}]\t'
-              'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-              'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-              'MAE {mae_errors.val:.3f} ({mae_errors.avg:.3f})'.format(
-            i, len(val_loader), batch_time=batch_time, loss=losses,
-            mae_errors=mae_errors))
+        if i % 50 == 0:
+            print('Test: [{0}/{1}]\t'
+                  'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+                  'MAE {mae_errors.val:.3f} ({mae_errors.avg:.3f})'.format(
+                i, len(val_loader), batch_time=batch_time, loss=losses,
+                mae_errors=mae_errors))
 
     if test:
         star_label = '**'

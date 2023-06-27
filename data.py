@@ -12,6 +12,7 @@ from torch.nn.utils.rnn import pad_sequence
 import random
 import functools
 import numpy as np
+import pickle
 
 from pdd_helpers import custom_PDD
 
@@ -183,27 +184,29 @@ class PDDData2(Dataset):
             self.id_prop_data = [row for row in reader]
         random.seed(seed)
         random.shuffle(self.id_prop_data)
+        k = int(k)
         self.k = k
         self.collapse_tol = float(collapse_tol)
         self.constrained = constrained
         self.composition = composition
+        print("k: " + str(k))
+        print("ct: " + str(self.collapse_tol))
         pdds = []
-        i = 0
-        for cif in self.id_prop_data:
-            print(i)
-            i += 1
-            reader = amd.CifReader(os.path.join(self.filepath, cif[0] + '.cif'))
-            ps = reader.read()
+        periodic_sets = [amd.CifReader(os.path.join(filepath, cif[0] + ".cif")).read() for cif in self.id_prop_data]
+        for ps in periodic_sets:
             pdd, groups, inds, _ = custom_PDD(ps, k=self.k, collapse=True, collapse_tol=self.collapse_tol,
                                               constrained=self.constrained, lexsort=False)
             indices_in_graph = [i[0] for i in groups]
             atom_features = ps.types[indices_in_graph][:, None]
             pdd = np.hstack([pdd, atom_features])
             pdds.append(pdd)
-            min_pdd = np.min(np.vstack([np.min(pdd, axis=0) for pdd in pdds]), axis=0)
-            max_pdd = np.max(np.vstack([np.max(pdd, axis=0) for pdd in pdds]), axis=0)
-            self.pdds = [np.hstack([pdd[:, 0, None], (pdd[:, 1:-1] - min_pdd[1:-1]) / (max_pdd[1:-1] - min_pdd[1:-1]), pdd[:, -1, None]]) for pdd
-                         in pdds]
+
+        min_pdd = np.min(np.vstack([np.min(pdd, axis=0) for pdd in pdds]), axis=0)
+        max_pdd = np.max(np.vstack([np.max(pdd, axis=0) for pdd in pdds]), axis=0)
+        self.pdds = [np.hstack(
+            [pdd[:, 0, None], (pdd[:, 1:-1] - min_pdd[1:-1]) / (max_pdd[1:-1] - min_pdd[1:-1]), pdd[:, -1, None]]) for
+                     pdd
+                     in pdds]
 
     def __len__(self):
         return len(self.id_prop_data)

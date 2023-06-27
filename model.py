@@ -36,15 +36,14 @@ class PeriodicSetTransformerEncoder(nn.Module):
 
 class PeriodicSetTransformer(nn.Module):
 
-    def __init__(self, initial_fea_len, embed_dim, num_heads, n_encoders=3, decoder_layers=1, composition=True):
+    def __init__(self, initial_fea_len, embed_dim, num_heads, n_encoders=3, decoder_layers=1, components=["pdd", "composition"], expansion_size=10):
         super(PeriodicSetTransformer, self).__init__()
-        self.embedding_layer = nn.Linear(initial_fea_len - 1, embed_dim)
-        self.composition = composition
-        if self.composition:
-            self.comp_embedding_layer = nn.Linear(92, embed_dim)
-            self.af = AtomFeaturizer()
-            self.embedding_layer = nn.Linear(initial_fea_len - 1, embed_dim)
-
+        self.embedding_layer = nn.Linear((initial_fea_len - 2) * expansion_size, embed_dim)
+        self.composition = "composition" in components
+        self.pdd_encoding = "pdd" in components
+        self.comp_embedding_layer = nn.Linear(92, embed_dim)
+        self.af = AtomFeaturizer()
+        self.de = DistanceExpansion(size=expansion_size)
         self.ln = nn.LayerNorm(embed_dim)
         self.softplus = nn.Softplus()
         self.encoders = nn.ModuleList([PeriodicSetTransformerEncoder(embed_dim, num_heads) for _ in range(n_encoders)])
@@ -58,15 +57,17 @@ class PeriodicSetTransformer(nn.Module):
     def forward(self, features):
         weights = features[:, :, 0, None]
         features = features[:, :, 1:]
-        if self.composition:
-            comp_features = self.af(features[:, :, -1:])
-            comp_features = self.comp_embedding_layer(comp_features)
-            str_features = features[:, :, :-1]
-            str_features = self.embedding_layer(str_features)
-            #x = comp_features + str_features
+        comp_features = self.af(features[:, :, -1:])
+        comp_features = self.comp_embedding_layer(comp_features)
+        str_features = features[:, :, :-1]
+        str_features = self.embedding_layer(self.de(str_features))
+        # x = comp_features + str_features
+        if self.composition and self.pdd_encoding:
             x = self.ln(comp_features + str_features)
-        else:
-            x = self.embedding_layer(features)
+        elif self.composition:
+            x = comp_features
+        elif self.pdd_encoding:
+            x = str_features
         x_init = x
         for encoder in self.encoders:
             x = encoder(x, weights)
@@ -89,4 +90,16 @@ class AtomFeaturizer(nn.Module):
 
     def forward(self, x):
         return torch.squeeze(self.atom_fea[x.long()])
+
+
+class DistanceExpansion(nn.Module):
+    def __init__(self, size=10):
+        super(DistanceExpansion, self).__init__()
+        self.size = size
+        self.starter = torch.Tensor([i for i in range(size)]).cuda()
+        self.starter /= size
+
+    def forward(self, x):
+        out = (1 - (x.flatten().reshape((-1, 1)) - self.starter)) ** 2
+        return out.reshape((x.shape[0], x.shape[1], x.shape[2] * self.size))
 
