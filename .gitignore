@@ -1,3 +1,6 @@
 data
 __pycache__
 .idea
+cached_data
+results.txt
+run_all.sh
