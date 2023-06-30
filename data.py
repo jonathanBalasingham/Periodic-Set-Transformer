@@ -7,7 +7,7 @@ import os
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.dataloader import default_collate
-from torch.utils.data.sampler import SubsetRandomSampler
+from torch.utils.data.sampler import SubsetRandomSampler, SequentialSampler
 from torch.nn.utils.rnn import pad_sequence
 import random
 import functools
@@ -49,7 +49,7 @@ def get_train_val_test_loader(dataset, collate_fn=default_collate,
     val_sampler = SubsetRandomSampler(
         indices[-(valid_size + test_size):-test_size])
     if return_test:
-        test_sampler = SubsetRandomSampler(indices[-test_size:])
+        test_sampler = SequentialSampler(indices[-test_size:])
     train_loader = DataLoader(dataset, batch_size=batch_size,
                               sampler=train_sampler,
                               num_workers=num_workers,
@@ -59,8 +59,9 @@ def get_train_val_test_loader(dataset, collate_fn=default_collate,
                             num_workers=num_workers,
                             collate_fn=collate_fn, pin_memory=pin_memory)
     if return_test:
-        test_loader = DataLoader(dataset, batch_size=batch_size,
-                                 sampler=test_sampler,
+        test_set = torch.utils.data.Subset(dataset, indices[-test_size:])
+        test_loader = DataLoader(test_set, batch_size=batch_size,
+                                 #sampler=test_sampler,
                                  num_workers=num_workers,
                                  collate_fn=collate_fn, pin_memory=pin_memory)
     if return_test:
@@ -173,7 +174,7 @@ class PDDData(Dataset):
                 cif_id
 
 
-class PDDData2(Dataset):
+class PDDDataNormalized(Dataset):
     def __init__(self, filepath, k=60, collapse_tol=1e-4, composition=True, constrained=True, seed=123):
         self.filepath = filepath
         assert os.path.exists(filepath), 'root_dir does not exist!'
@@ -214,6 +215,43 @@ class PDDData2(Dataset):
     @functools.lru_cache(maxsize=None)  # Cache loaded structures
     def __getitem__(self, idx):
         cif_id, target = self.id_prop_data[idx]
+        return torch.Tensor(self.pdds[idx]), \
+               torch.Tensor([float(target)]), \
+               cif_id
+
+
+class PDDDataPymatgen(Dataset):
+    def __init__(self, structures, targets, k=60, collapse_tol=1e-4, composition=True, constrained=True):
+        k = int(k)
+        self.k = k
+        self.collapse_tol = float(collapse_tol)
+        self.constrained = constrained
+        self.composition = composition
+        self.id_prop_data = targets
+        pdds = []
+        periodic_sets = [amd.periodicset_from_pymatgen_structure(s) for s in structures]
+
+        for ps in periodic_sets:
+            pdd, groups, inds, _ = custom_PDD(ps, k=self.k, collapse=True, collapse_tol=self.collapse_tol,
+                                              constrained=self.constrained, lexsort=False)
+            indices_in_graph = [i[0] for i in groups]
+            atom_features = ps.types[indices_in_graph][:, None]
+            pdd = np.hstack([pdd, atom_features])
+            pdds.append(pdd)
+
+        min_pdd = np.min(np.vstack([np.min(pdd, axis=0) for pdd in pdds]), axis=0)
+        max_pdd = np.max(np.vstack([np.max(pdd, axis=0) for pdd in pdds]), axis=0)
+        self.pdds = [np.hstack(
+            [pdd[:, 0, None], (pdd[:, 1:-1] - min_pdd[1:-1]) / (max_pdd[1:-1] - min_pdd[1:-1]), pdd[:, -1, None]]) for
+                     pdd
+                     in pdds]
+
+    def __len__(self):
+        return len(self.id_prop_data)
+
+    @functools.lru_cache(maxsize=None)  # Cache loaded structures
+    def __getitem__(self, idx):
+        cif_id, target = self.id_prop_data.index[idx], self.id_prop_data.iloc[idx]
         return torch.Tensor(self.pdds[idx]), \
                torch.Tensor([float(target)]), \
                cif_id

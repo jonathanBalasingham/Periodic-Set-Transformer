@@ -82,7 +82,7 @@ class PeriodicSetTransformer(nn.Module):
 
 
 class AtomFeaturizer(nn.Module):
-    def __init__(self, id_prop_file="/home/jon/Desktop/pdd-graph-cgcnn/root_dir/atom_init.json"):
+    def __init__(self, id_prop_file="atom_init.json"):
         super(AtomFeaturizer, self).__init__()
         with open(id_prop_file) as f:
             atom_fea = json.load(f)

@@ -88,8 +88,9 @@ def custom_PDD(
         cubic_amd = amd.PDD((motif, cell), 100)
     """
 
-    motif, cell, asymmetric_unit, weights = _extract_motif_cell(periodic_set)
-    dists, cloud, inds = amd.nearest_neighbours(motif, cell, asymmetric_unit, k)
+    motif, cell, asymmetric_unit, weights = extract_motif_cell(periodic_set)
+    weights = np.full((len(motif),), 1 / len(motif))
+    dists, cloud, inds = amd.nearest_neighbours(motif, cell, motif, k)
     groups = [[i] for i in range(len(dists))]
 
     if collapse and collapse_tol >= 0:
@@ -119,7 +120,7 @@ def custom_PDD(
         return pdd, inds, cloud
 
 
-def _extract_motif_cell(pset: amd.PeriodicSet):
+def extract_motif_cell(pset: amd.PeriodicSet):
     """``pset`` is either a
     :class:`amd.PeriodicSet <.periodicset.PeriodicSet>` or a tuple of
     :class:`numpy.ndarray` s (motif, cell). If possible, extracts the
