@@ -4,3 +4,7 @@ __pycache__
 cached_data
 results.txt
 run_all.sh
+*.gz
+checkpoint.pth.tar
+model_best.pth.tar
+*.csv
