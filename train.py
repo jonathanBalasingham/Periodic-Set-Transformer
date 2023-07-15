@@ -33,7 +33,8 @@ def train(train_loader, model, criterion, optimizer, epoch, normalizer, cuda=Tru
         data_time.update(time.time() - end)
 
         if cuda:
-            input_var = Variable(input).cuda(non_blocking=True)
+            #input_var = Variable(input).cuda(non_blocking=True)
+            input_var = [Variable(i).cuda(non_blocking=True) for i in input]
         else:
             input_var = Variable(input)
         # normalize target
@@ -89,7 +90,8 @@ def validate(val_loader, model, criterion, normalizer, test=False, return_pred=F
     for i, (input, target, batch_cif_ids) in enumerate(val_loader):
         if cuda:
             with torch.no_grad():
-                input_var = Variable(input).cuda(non_blocking=True)
+                #input_var = Variable(input).cuda(non_blocking=True)
+                input_var = [Variable(i).cuda(non_blocking=True) for i in input]
         else:
             with torch.no_grad():
                 input_var = Variable(input)
@@ -221,4 +223,9 @@ def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     if is_best:
         shutil.copyfile(filename, 'model_best.pth.tar')
 
+
+def save_encoder_checkpoint(state, is_best, filename='encoder_checkpoint.pth.tar'):
+    torch.save(state, filename)
+    if is_best:
+        shutil.copyfile(filename, 'encoder_best.pth.tar')
 

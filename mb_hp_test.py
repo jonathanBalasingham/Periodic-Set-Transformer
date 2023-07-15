@@ -14,25 +14,93 @@ from matbench_parameters import p
 
 mb = MatbenchBenchmark(autoload=False)
 
+
 best_mae_error = 1e10
 
 tasks = [
-    #mb.matbench_dielectric,
-    #mb.matbench_log_gvrh,
-    #mb.matbench_log_kvrh,
-    mb.matbench_mp_gap,
+    mb.matbench_dielectric,
+    mb.matbench_log_gvrh,
+    mb.matbench_log_kvrh,
+    #mb.matbench_mp_gap,
     #mb.matbench_phonons,
 
 ]
 
-for task in tasks:
-    pset = p[task.dataset_name]
+task = mb.matbench_log_gvrh
+
+possible_hp = [
+    {
+        "hp": {
+            "fea_len": 128,
+            "num_heads": 2,
+            "num_encoders": 4,
+            "num_decoder": 1
+        },
+        "training_options": {
+            "lr": 0.0001,
+            "wd": 1e-5,
+            "lr_milestones": [75, 150],
+            "epochs": 200,
+            "batch_size": 32,
+            "val_ratio": 0.1,
+            "cuda": True
+        },
+        "data_options": {
+            "k": 15,
+            "tol": 1e-4
+        }
+    },
+    {
+        "hp": {
+            "fea_len": 64,
+            "num_heads": 2,
+            "num_encoders": 4,
+            "num_decoder": 1
+        },
+        "training_options": {
+            "lr": 0.0001,
+            "wd": 1e-5,
+            "lr_milestones": [75, 150],
+            "epochs": 200,
+            "batch_size": 64,
+            "val_ratio": 0.1,
+            "cuda": True
+        },
+        "data_options": {
+            "k": 15,
+            "tol": 1e-4
+        }
+    },
+    {
+        "hp": {
+            "fea_len": 64,
+            "num_heads": 2,
+            "num_encoders": 4,
+            "num_decoder": 1
+        },
+        "training_options": {
+            "lr": 0.0001,
+            "wd": 1e-5,
+            "lr_milestones": [75, 150],
+            "epochs": 200,
+            "batch_size": 64,
+            "val_ratio": 0.1,
+            "cuda": True
+        },
+        "data_options": {
+            "k": 25,
+            "tol": 1e-4
+        }
+    }
+]
+
+
+for pset in possible_hp:
     training_options = pset["training_options"]
     hp = pset["hp"]
     data_options = pset["data_options"]
     task.load()
     for fold in task.folds:
-        best_mae_error = 1e10
         # Get all the data
         train_inputs, train_outputs = task.get_train_and_val_data(fold)
         test_inputs, test_outputs = task.get_test_data(fold, include_target=True)
@@ -55,10 +123,8 @@ for task in tasks:
             test_size=test_size,
             return_test=True)
         orig_atom_fea_len = dataset[0][0].shape[-1]
-        print(orig_atom_fea_len)
-        print(dataset[0][1].shape[-1])
         sample_data_list = [dataset[i] for i in
-                            sample(range(train_outputs.shape[0]), 5000)]
+                            sample(range(train_outputs.shape[0]), 500)]
         _, sample_target, _ = collate_pool(sample_data_list)
         normalizer = Normalizer(sample_target)
         model = PeriodicSetTransformer(orig_atom_fea_len,
@@ -90,7 +156,7 @@ for task in tasks:
             }, is_best)
         print('---------Evaluate Model on Test Set---------------')
         best_checkpoint = torch.load('model_best.pth.tar')
-        #model.load_state_dict(best_checkpoint['state_dict'])
+        model.load_state_dict(best_checkpoint['state_dict'])
         predictions = validate(test_loader, model, criterion, normalizer, test=True, return_pred=True)
         task.record(fold, predictions)
     print(task.scores)
@@ -101,13 +167,10 @@ my_metadata = {
     "configuration": p
 }
 mb.add_metadata(my_metadata)
-mb.to_file("results_bgap.json.gz")
+mb.to_file("results_gvrh.json.gz")
 
-#print(mb.matbench_dielectric.scores)
-#print(mb.matbench_log_gvrh.scores)
-#print(mb.matbench_log_kvrh.scores)
-print(mb.matbench_mp_gap.scores)
-#print(mb.matbench_mp_e_form.scores)
+print(mb.matbench_log_gvrh.scores)
+
 """
 {'mean': 0.31757841981746765, 'max': 0.4169551713988986, 'min': 0.20061424914085754, 'std': 0.0788482182337675}
 k: 20 -> 15
@@ -118,24 +181,4 @@ k: 15 -> 10
 Nope, back to 15
 num_heads: 2 -> 4
 {'mean': 0.307351050042718, 'max': 0.40365942438514935, 'min': 0.19736206675822782, 'std': 0.07230566140343077}
-# BAND GAP
- {'mean': 0.2442376544787678, 'max': 0.2679554260349575, 'min': 0.21441741559763183, 'std': 0.020367514123334717}, 
- 'rmse': {'mean': 0.5187990349849143, 'max': 0.5818557557335512, 'min': 0.4714052581636044, 'std': 0.046720728105528624}, 
- 'mape': {'mean': 5.557214727414577, 'max': 8.449106351191956, 'min': 2.94907064505394, 'std': 2.007238344719603}, 
- 'max_error': {'mean': 6.905910924911498, 'max': 7.255345344543457, 'min': 6.505718231201172, 'std': 0.29371542373133436}}
-
-"""
-
-"""
-DIELECTRIC:
- 'mae': {'mean': 0.2442376544787678, 'max': 0.2679554260349575, 'min': 0.21441741559763183, 'std': 0.020367514123334717}, 
- 'rmse': {'mean': 0.5187990349849143, 'max': 0.5818557557335512, 'min': 0.4714052581636044, 'std': 0.046720728105528624},
- 'mape': {'mean': 5.557214727414577, 'max': 8.449106351191956, 'min': 2.94907064505394, 'std': 2.007238344719603}, 
- 'max_error': {'mean': 6.905910924911498, 'max': 7.255345344543457, 'min': 6.505718231201172, 'std': 0.29371542373133436}}
-
-# BAND GAP
- {'mean': 0.2442376544787678, 'max': 0.2679554260349575, 'min': 0.21441741559763183, 'std': 0.020367514123334717}, 
- 'rmse': {'mean': 0.5187990349849143, 'max': 0.5818557557335512, 'min': 0.4714052581636044, 'std': 0.046720728105528624}, 
- 'mape': {'mean': 5.557214727414577, 'max': 8.449106351191956, 'min': 2.94907064505394, 'std': 2.007238344719603}, 
- 'max_error': {'mean': 6.905910924911498, 'max': 7.255345344543457, 'min': 6.505718231201172, 'std': 0.29371542373133436}}
 """
