@@ -210,7 +210,8 @@ class PDDData(Dataset):
 
 
 class PDDDataNormalized(Dataset):
-    def __init__(self, filepath, k=60, collapse_tol=1e-4, composition=True, constrained=True, seed=123, shuffle=True):
+    def __init__(self, filepath, k=15, collapse_tol=1e-4, composition=True, constrained=True,
+                 seed=123, shuffle=True, collapse=True):
         self.filepath = filepath
         assert os.path.exists(filepath), 'root_dir does not exist!'
         id_prop_file = os.path.join(self.filepath, 'id_prop.csv')
@@ -229,23 +230,22 @@ class PDDDataNormalized(Dataset):
         print("k: " + str(k))
         print("ct: " + str(self.collapse_tol))
         pdds = []
-        periodic_sets = [amd.CifReader(os.path.join(filepath, cif[0] + ".cif")).read() for cif in self.id_prop_data]
+        atom_fea = []
+        periodic_sets = [amd.CifReader(os.path.join(filepath, cif[0] + ".cif")).read() for cif in tqdm(self.id_prop_data, desc="Reading CIF files..")]
         self.cell_fea = [amd.cell_to_cellpar(ps.cell) for ps in periodic_sets]
-        for ps in periodic_sets:
-            pdd, groups, inds, _ = custom_PDD(ps, k=self.k, collapse=True, collapse_tol=self.collapse_tol,
+        for i in tqdm(range(len(periodic_sets)),
+                      desc="Creating PDDs…",
+                      ascii=False, ncols=75):
+            ps = periodic_sets[i]
+            pdd, groups, inds, _ = custom_PDD(ps, k=self.k, collapse=collapse, collapse_tol=self.collapse_tol,
                                               constrained=self.constrained, lexsort=False)
             indices_in_graph = [i[0] for i in groups]
             atom_features = ps.types[indices_in_graph][:, None]
-            pdd = np.hstack([pdd, atom_features])
+            atom_fea.append(atom_features)
             pdds.append(pdd)
 
-        min_pdd = np.min(np.vstack([np.min(pdd, axis=0) for pdd in pdds]), axis=0)
-        max_pdd = np.max(np.vstack([np.max(pdd, axis=0) for pdd in pdds]), axis=0)
-        self.pdds = [np.hstack(
-            [pdd[:, 0, None], (pdd[:, 1:-1] - min_pdd[1:-1]) / (max_pdd[1:-1] - min_pdd[1:-1])]) for
-            pdd
-            in pdds]
-        self.atom_fea = [pdd[:, -1, None] for pdd in pdds]
+        self.pdds = preprocess_pdds(pdds)
+        self.atom_fea = atom_fea
 
     def __len__(self):
         return len(self.id_prop_data)
@@ -271,7 +271,7 @@ def preprocess_pdds(pdds_):
 
 
 class PDDDataPymatgen(Dataset):
-    def __init__(self, structures, targets, k=60, collapse_tol=1e-4, composition=True, constrained=True, collapse=True):
+    def __init__(self, structures, targets, k=15, collapse_tol=1e-4, composition=True, constrained=True, collapse=True):
         k = int(k)
         self.k = k
         self.collapse_tol = float(collapse_tol)
@@ -300,8 +300,6 @@ class PDDDataPymatgen(Dataset):
             pdds.append(pdd)
             pdd_sizes.append(pdd.shape[0])
 
-        print(f"Average motif size: {np.mean(motif_sizes)}")
-        print(f"Average PDD size: {np.mean(pdd_sizes)}")
         self.pdds = preprocess_pdds(pdds)
         self.atom_fea = atom_fea
 

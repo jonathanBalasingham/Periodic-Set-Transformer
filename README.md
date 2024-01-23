@@ -13,8 +13,10 @@ https://github.com/txie-93/cgcnn. The general usage is largely the same as their
 - `plots.py`: Defines the functions for creating the plots in the article
 - `gpr.py`: The Gaussian Process Regression implementation used in the experiments
 - `pdd_helpers.py` - Helper functions for creating PDDs from CIFs
-- `atom_init.json`: Defines the atom features in a one-hot encoded manner
-
+- `atom_init.json`: Defines CGCNN atom features in a one-hot encoded manner
+- `mat2vec.csv`: Defined Mat2Vec atom features
+- `mf`: This folder contains the Jarvis IDs that were in the train, validation and test set when Matformer was run
+- `jarvis_dft_2d_2021_pymatgen_structures.zip`: Zip file containing the data to run the Jarvis-DFT dataset
 
 ## General Usage
 
@@ -46,3 +48,8 @@ In order to run the test suite for Matbench please run the following:
 `python mb.py`.
 
 The `results.tar.gz` file will appear in the same directory.
+
+## Jarvis-DFT
+
+To run the Jarvis-DFT dataset first, unzip the data file `jarvis_dft_3d_pymatgen_structure.zip`. 
+The resulting binary will automatically be read in after running `python run_jarvis.py`.

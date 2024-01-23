@@ -102,7 +102,7 @@ def run_fold(fold, task, training_options, data_options, hp, use_cuda=True, suff
     return predictions
 
 
-def main(verbose=True):
+def main(verbose=True, suffix=""):
     mb = MatbenchBenchmark(autoload=False)
 
     tasks = [
@@ -112,11 +112,9 @@ def main(verbose=True):
         mb.matbench_log_gvrh,
         mb.matbench_log_kvrh,
         mb.matbench_perovskites,
-        #mb.matbench_mp_e_form,
-        #mb.matbench_mp_gap
+        mb.matbench_mp_e_form,
+        mb.matbench_mp_gap
     ]
-
-    suffix = "k_20"
 
     for task in tasks:
         torch.manual_seed(0)
@@ -126,7 +124,6 @@ def main(verbose=True):
         training_options = pset["training_options"]
         hp = pset["hp"]
         data_options = pset["data_options"]
-        data_options["k"] = 20
         task.load()
         fold_times = []
         for fold in task.folds:

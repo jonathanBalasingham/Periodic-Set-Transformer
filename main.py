@@ -86,8 +86,6 @@ parser.add_argument('--disable-composition', action='store_true',
 parser.add_argument('--disable-pdd-encoding', action='store_true',
                     help='Disable PDD Encoding')
 
-parser.add_argument('--use-lmdb', action='store_true',
-                    help='Use LMDB file')
 
 
 args = parser.parse_args(sys.argv[1:])
@@ -106,10 +104,8 @@ def main():
     if not args.disable_composition:
         components.append("composition")
 
-    if args.use_lmdb:
-        dataset = LMDBData(*args.data_options)
-    else:
-        dataset = PDDDataNormalized(*args.data_options)
+
+    dataset = PDDDataNormalized(*args.data_options)
 
     collate_fn = collate_pool
     train_loader, val_loader, test_loader = get_train_val_test_loader(
@@ -180,7 +176,7 @@ def main():
                             gamma=0.1)
 
     for epoch in range(args.start_epoch, args.epochs):
-        train(train_loader, model, criterion, optimizer, epoch, normalizer, cuda=args.cuda, print_freq=args.print_freq)
+        train(train_loader, model, criterion, optimizer, epoch, normalizer, cuda=args.cuda)
         mae_error = validate(val_loader, model, criterion, normalizer, cuda=args.cuda)
 
         if mae_error != mae_error:
