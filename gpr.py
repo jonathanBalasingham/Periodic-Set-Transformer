@@ -1,3 +1,12 @@
+"""
+This is a modifed version of the code from:
+Jakob Ropers, Marco M. Mosca, Olga Anosova, Vitaliy Kurlin, and Andrew I. Cooper. Fast pre-
+dictions of lattice energies by continuous isometry invariants of crystal structures. In Alexei
+Pozanenko, Sergey Stupnikov, Bernhard Thalheim, Eva Mendez, and Nadezhda Kiselyova (eds.),
+Data Analytics and Management in Data Intensive Domains, pp. 178–192, Cham, 2022. Springer
+International Publishing. ISBN 978-3-031-12285-9.
+"""
+
 import amd
 import numpy as np
 import pickle
@@ -9,15 +18,21 @@ from sklearn.model_selection import train_test_split
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import DotProduct, WhiteKernel, RationalQuadratic, RBF, ConstantKernel, Matern, ExpSineSquared
 
-files = ["./data/T2_Predicted_Structures.cif",
+files = ["./data/P2_Predicted_Structures.cif",
          "./data/P1_Predicted_Structures.cif",
-         "./data/S2_Predicted_Structures.cif"]
+         "./data/P1M_Predicted_Structures.cif",
+         "./data/P2M_Predicted_Structures.cif"]
+
+sizes = []
 
 def create_data(k =1000):
     import os
+    print("creating data...")
     for file in files:
+        print(file)
         r = amd.CifReader(file)
         periodic_sets = [i for i in r]
+        sizes.append(len(periodic_sets))
         energies = [float(ps.name.split("_")[0]) for ps in periodic_sets]
         amds = np.vstack([amd.AMD(ps, k=k) for ps in periodic_sets])
         energies = np.array(energies).reshape((-1,1))
@@ -26,14 +41,17 @@ def create_data(k =1000):
             pickle.dump(data, f)
 
 
+create_data(100)
+
 def read_data(filepath):
     with open(filepath, "rb") as f:
         return pickle.load(f)
 
 
-data_files = ["./data/amds_T2_Predicted_Structures",
+data_files = ["./data/amds_P2_Predicted_Structures",
               "./data/amds_P1_Predicted_Structures",
-              "./data/amds_S2_Predicted_Structures"]
+              "./data/amds_P1M_Predicted_Structures",
+              "./data/amds_P2M_Predicted_Structures"]
 
 
 data = [read_data(file) for file in data_files]
@@ -53,7 +71,7 @@ def data(feature_data, label_data):
     label_scaler = preprocessing.MinMaxScaler(feature_range=(0, 1))
     y_scaled = label_scaler.fit_transform(label_data.reshape(-1, 1))
 
-    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y_scaled, test_size=0.1, shuffle=True)
+    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y_scaled, test_size=sizes[-1] / np.sum(sizes), shuffle=False)
 
     return X_train, y_train, X_test, y_test, label_scaler
 
@@ -64,6 +82,7 @@ kernel = RationalQuadratic()
 
 gpr = GaussianProcessRegressor(kernel=kernel)
 
+print("training...")
 gpr.fit(X_train, y_train)
 mean_predictions, std_predictions = gpr.predict(X_test, return_std=True)
 std_predictions = std_predictions.reshape(-1,1)

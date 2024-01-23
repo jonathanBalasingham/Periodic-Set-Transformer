@@ -2,13 +2,10 @@ import amd
 import collections
 from scipy.spatial.distance import squareform, pdist
 import numpy as np
+from itertools import permutations, combinations
 
 
 def _collapse_into_groups(overlapping):
-    """The vector `overlapping` indicates for each pair of items in a set whether
-    or not the items overlap, in the shape of a condensed distance matrix. Returns
-    a list of groups of indices where all items in the same group overlap."""
-
     overlapping = squareform(overlapping)
     group_nums = {}  # row_ind: group number
     group = 0
@@ -33,64 +30,18 @@ def custom_PDD(
         periodic_set,
         k: int,
         lexsort: bool = False,
-        collapse: bool = False,
+        collapse: bool = True,
         collapse_tol: float = 1e-4,
         return_row_groups: bool = True,
         constrained: bool = True,
-) -> np.ndarray:
-    """The PDD of a periodic set (crystal) up to k.
-    Parameters
-    ----------
-    periodic_set : :class:`.periodicset.PeriodicSet`  tuple of :class:`numpy.ndarray` s
-        A periodic set represented by a :class:`.periodicset.PeriodicSet` or
-        by a tuple (motif, cell) with coordinates in Cartesian form and a square unit cell.
-    k : int
-        The returned PDD has k+1 columns, an additional first column for row weights.
-        k is the number of neighbours considered for each atom in the unit cell
-        to make the PDD.
-    lexsort : bool, default True
-        Lexicographically order the rows. Default True.
-    collapse: bool, default True
-        Collapse repeated rows (within the tolerance ``collapse_tol``). Default True.
-    collapse_tol: float, default 1e-4
-        If two rows have all elements closer than ``collapse_tol``, they are merged and
-        weights are given to rows in proportion to the number of times they appeared.
-        Default is 0.0001.
-    return_row_groups: bool, default False
-        Return data about which PDD rows correspond to which points.
-        If True, a tuple is returned ``(pdd, groups)`` where ``groups[i]``
-        contains the indices of the point(s) corresponding to ``pdd[i]``.
-        Note that these indices are for the asymmetric unit of the set, whose
-        indices in ``periodic_set.motif`` are accessible through
-        ``periodic_set.asymmetric_unit``.
-    Returns
-    -------
-    numpy.ndarray
-        A :class:`numpy.ndarray` with k+1 columns, the PDD of ``periodic_set`` up to k.
-        The first column contains the weights of rows. If ``return_row_groups`` is True,
-        returns a tuple (:class:`numpy.ndarray`, list).
-    Examples
-    --------
-    Make list of PDDs with ``k=100`` for crystals in mycif.cif::
-        pdds = []
-        for periodic_set in amd.CifReader('mycif.cif'):
-            # do not lexicographically order rows
-            pdds.append(amd.PDD(periodic_set, 100, lexsort=False))
-    Make list of PDDs with ``k=10`` for crystals in these CSD refcode families::
-        pdds = []
-        for periodic_set in amd.CSDReader(['HXACAN', 'ACSALA'], families=True):
-            # do not collapse rows
-            pdds.append(amd.PDD(periodic_set, 10, collapse=False))
-    Manually pass a periodic set as a tuple (motif, cell)::
-        # simple cubic lattice
-        motif = np.array([[0,0,0]])
-        cell = np.array([[1,0,0], [0,1,0], [0,0,1]])
-        cubic_amd = amd.PDD((motif, cell), 100)
-    """
-
-    motif, cell, asymmetric_unit, weights = _extract_motif_cell(periodic_set)
-    dists, cloud, inds = amd.nearest_neighbours(motif, cell, asymmetric_unit, k)
+        return_angles: bool = False,
+) -> [np.ndarray]:
+    motif, cell, asymmetric_unit, weights = extract_motif_cell(periodic_set)
+    weights = np.full((len(motif),), 1 / len(motif))
+    dists, cloud, inds = amd.nearest_neighbours(motif, cell, motif, k)
     groups = [[i] for i in range(len(dists))]
+    if return_angles:
+        angles = get_angles(motif, cloud, inds)
 
     if collapse and collapse_tol >= 0:
         overlapping = pdist(dists, metric='chebyshev')
@@ -100,10 +51,17 @@ def custom_PDD(
 
         if constrained:
             overlapping = overlapping & types_match & neighbors_match
+
+        if return_angles:
+            angles_overlapping = pdist(dists, metric='chebyshev') <= collapse_tol
+            overlapping = overlapping & angles_overlapping
+
         if overlapping.any():
             groups = _collapse_into_groups(overlapping)
             weights = np.array([sum(weights[group]) for group in groups])
             dists = np.array([np.average(dists[group], axis=0) for group in groups])
+            if return_angles:
+                angles = np.array([np.average(angles[group], axis=0) for group in groups])
 
     pdd = np.hstack((weights[:, None], dists))
 
@@ -112,20 +70,20 @@ def custom_PDD(
         if return_row_groups:
             groups = [groups[i] for i in lex_ordering]
         pdd = pdd[lex_ordering]
+        if return_angles:
+            angles = angles[lex_ordering]
 
     if return_row_groups:
+        if return_angles:
+            return pdd, groups, inds, cloud, angles
         return pdd, groups, inds, cloud
     else:
+        if return_angles:
+            return pdd, inds, cloud, angles
         return pdd, inds, cloud
 
 
-def _extract_motif_cell(pset: amd.PeriodicSet):
-    """``pset`` is either a
-    :class:`amd.PeriodicSet <.periodicset.PeriodicSet>` or a tuple of
-    :class:`numpy.ndarray` s (motif, cell). If possible, extracts the
-    asymmetric unit and wyckoff multiplicities.
-    """
-
+def extract_motif_cell(pset: amd.PeriodicSet):
     if isinstance(pset, amd.PeriodicSet):
         motif, cell = pset.motif, pset.cell
         asym_unit = pset.asymmetric_unit
@@ -142,3 +100,42 @@ def _extract_motif_cell(pset: amd.PeriodicSet):
         weights = np.full((len(motif),), 1 / len(motif))
 
     return motif, cell, asymmetric_unit, weights
+
+
+def unit_vector(vector, axis=-1):
+    return vector / np.linalg.norm(vector, axis=axis)[:, :, :, None]
+
+
+def get_angles(motif, cloud, inds):
+    neighbor_vectors = cloud[inds] - motif[:, None, :]
+    vc = list(combinations(range(inds.shape[1]), 2))
+    angle_vectors = np.array([neighbor_vectors[i][vc] for i in range(motif.shape[0])])
+    #  Shape is (number of motif points, number of neighbors, (two vectors), number of combos, 3D point)
+    uv = unit_vector(angle_vectors)
+    angles = np.arccos(np.clip(np.sum(uv[:, :, 0, :] * uv[:, :, 1, :], axis=-1), -1.0, 1.0))
+    angles = angles.reshape((motif.shape[0], len(vc)))
+    return angles
+
+
+def angle_tensor(motif, cloud, inds):
+    """
+    Take a motif of size m,
+    The output should be a np.array of dim: (m, m, k)
+
+    ? Does which pair effect the angles?
+
+    """
+    motif_indices = np.array([i for i in range(motif.shape[0])])
+    # as a test consider p0 and p1 in the motif
+    p0 = motif[0]
+    p1 = motif[1]
+    # an alternate p1 would be where inds % motif.shape[0] == 1
+    reduced_indices = inds % motif.shape[0]
+    alternate_p1 = cloud[inds][2][2]
+    # okay we have two points in the motif...
+    # how do we decide which angles are included
+
+    # OPTION 1: Use the k-NN in inds
+
+    # OPTION 2: The PDD(S; k) approach where we find exactly k angles
+
