@@ -12,13 +12,13 @@ from torch.optim.lr_scheduler import MultiStepLR
 from data import *
 from matbench_parameters import p
 from model import PeriodicSetTransformer, PeSTEncoder, CompositionDecoder, ElementMasker, FineTuner, NeighborDecoder, \
-    DistanceDecoder
+    DistanceDecoder, CloudDecoder
 from train import AverageMeter, mae, save_checkpoint, validate, train, save_encoder_checkpoint, Normalizer
 from matbench.bench import MatbenchBenchmark
 import pandas as pd
 
 
-def pretrain(train_loader, encoder, comp_decoder, masker, neighbor_decoder, criterion, optimizer, epoch, cuda=True, print_freq=100):
+def pretrain(train_loader, encoder, comp_decoder, masker, cloud_decoder, criterion, optimizer, epoch, cuda=True, print_freq=100):
     """
     Pre-train task 1:
     Masked atom property prediction
@@ -31,7 +31,7 @@ def pretrain(train_loader, encoder, comp_decoder, masker, neighbor_decoder, crit
     # switch to train mode
     encoder.train()
     comp_decoder.train()
-    neighbor_decoder.train()
+    cloud_decoder.train()
 
     end = time.time()
     cycles = 1
@@ -40,20 +40,22 @@ def pretrain(train_loader, encoder, comp_decoder, masker, neighbor_decoder, crit
         if cuda:
             input_var = [Variable(i).cuda(non_blocking=True) for i in input]
             coords = Variable(target[1]).cuda(non_blocking=True)
+            cloud = Variable(target[2]).cuda(non_blocking=True)
         else:
             input_var = Variable(input)
             coords = Variable(target[1])
+            cloud = Variable(target[2])
 
         for _ in range(cycles):
             masked = [random.randint(0, m - 1) for m in target[0]]
             masked_ids = Variable(torch.LongTensor(masked)).cuda(non_blocking=True)
             masked_input_comp = masker(input_var[1], masked_ids, mask_type="composition")
-            masked_input_str = masker(input_var[0], masked_ids, mask_type="structure")
+            #masked_input_str = masker(input_var[0], masked_ids, mask_type="structure")
 
-            _, embedded_inp = encoder((masked_input_str, masked_input_comp, input_var[2]))
+            _, embedded_inp = encoder((input_var[0], masked_input_comp, input_var[2]))
             gn, pn, en, cr, ve, fi, ea, bl, av = comp_decoder(embedded_inp, masked_ids)
             # pred_coords = neighbor_decoder(embedded_inp)
-            dist_pred = neighbor_decoder(embedded_inp, masked_ids)
+            predicted_cloud = cloud_decoder(cloud, embedded_inp)
 
             target_var = encoder.af(input_var[1])[torch.arange(input_var[1].shape[0]), masked_ids]
             target_var2 = input_var[0][torch.arange(input_var[0].shape[0]), masked_ids][:, 1:]
@@ -68,8 +70,10 @@ def pretrain(train_loader, encoder, comp_decoder, masker, neighbor_decoder, crit
             loss9 = criterion[0](av, target_var[:, 82:92])
 
             comp_loss = (loss1 + loss2 + loss3 + loss4 + loss5 + loss6 + loss7 + loss8 + loss9) / 9
-            structure_loss = criterion[1](target_var2, dist_pred)
+            #structure_loss = criterion[1](target_var2, dist_pred)
+            structure_loss = criterion[1](predicted_cloud, cloud)
             loss = comp_loss + structure_loss
+            loss = structure_loss
             # measure accuracy and record loss
             # mae_error = mae(normalizer.denorm(output.data.cpu()), target)
             losses.update(loss.data.cpu(), target[0].size(0))
@@ -97,7 +101,7 @@ def pretrain(train_loader, encoder, comp_decoder, masker, neighbor_decoder, crit
             )
 
 
-def pretrain_validate(val_loader, encoder, comp_decoder, masker, neighbor_decoder, criterion, optimizer, test=False, cuda=True):
+def pretrain_validate(val_loader, encoder, comp_decoder, masker, cloud_decoder, criterion, optimizer, test=False, cuda=True):
     batch_time = AverageMeter()
     losses = AverageMeter()
     mae_errors = AverageMeter()
@@ -105,7 +109,7 @@ def pretrain_validate(val_loader, encoder, comp_decoder, masker, neighbor_decode
     # switch to evaluate mode
     encoder.eval()
     comp_decoder.eval()
-    neighbor_decoder.eval()
+    cloud_decoder.eval()
 
     end = time.time()
     best_mae_error = 1e10
@@ -114,9 +118,11 @@ def pretrain_validate(val_loader, encoder, comp_decoder, masker, neighbor_decode
             with torch.no_grad():
                 input_var = [Variable(i).cuda(non_blocking=True) for i in input]
                 coords = Variable(target[1]).cuda(non_blocking=True)
+                cloud = Variable(target[2]).cuda(non_blocking=True)
         else:
             with torch.no_grad():
                 input_var = Variable(input)
+                cloud = Variable(target[2])
 
         masked = [random.randint(0, m - 1) for m in target[0]]
         masked_ids = Variable(torch.LongTensor(masked)).cuda(non_blocking=True)
@@ -126,7 +132,9 @@ def pretrain_validate(val_loader, encoder, comp_decoder, masker, neighbor_decode
         _, embedded_inp = encoder((masked_input_str, masked_input_comp, input_var[2]))
         gn, pn, en, cr, ve, fi, ea, bl, av = comp_decoder(embedded_inp, masked_ids)
         #pred_coords = neighbor_decoder(embedded_inp)
-        dist_pred = neighbor_decoder(embedded_inp, masked_ids)
+        #dist_pred = neighbor_decoder(embedded_inp, masked_ids)
+        predicted_cloud = cloud_decoder(cloud, embedded_inp)
+
         target_var = encoder.af(input_var[1])[torch.arange(input_var[1].shape[0]), masked_ids]
         target_var2 = input_var[0][torch.arange(input_var[0].shape[0]), masked_ids][:, 1:]
         loss1 = criterion[0](gn, target_var[:, :19])
@@ -140,8 +148,9 @@ def pretrain_validate(val_loader, encoder, comp_decoder, masker, neighbor_decode
         loss9 = criterion[0](av, target_var[:, 82:92])
 
         comp_loss = (loss1 + loss2 + loss3 + loss4 + loss5 + loss6 + loss7 + loss8 + loss9) / 9
-        structure_loss = criterion[1](target_var2, dist_pred)
+        structure_loss = criterion[1](cloud, predicted_cloud)
         loss = comp_loss + structure_loss
+        loss = structure_loss
         #loss = comp_loss
         # measure accuracy and record loss
         # mae_error = mae(normalizer.denorm(output.data.cpu()), target)
@@ -309,8 +318,8 @@ def finetune_validate(val_loader, encoder, decoder, criterion, normalizer, test=
 
 def main_pretrain():
     mb = MatbenchBenchmark(autoload=False)
-    task = mb.matbench_mp_gap
-    #task = mb.matbench_dielectric
+    task = mb.matbench_mp_e_form
+    #task = mb.matbench_phonons
     pset = p["pretrain"]
     training_options = pset["training_options"]
     hp = pset["hp"]
@@ -349,6 +358,8 @@ def main_pretrain():
     masker.cuda()
     distance_decoder = DistanceDecoder(hp["fea_len"], data_options["k"])
     #neighbor_decoder = NeighborDecoder(hp["fea_len"], data_options["k"] * 3)
+    cloud_decoder = CloudDecoder(hp["fea_len"], hp["num_heads"], 2)
+    cloud_decoder.cuda()
     #neighbor_decoder.cuda()
     distance_decoder.cuda()
     criterion1 = nn.CrossEntropyLoss()
@@ -359,8 +370,8 @@ def main_pretrain():
                             gamma=0.1)
     best_mae_error = 1e10
     for epoch in range(training_options["epochs"]):
-        pretrain(train_loader, encoder, comp_decoder, masker, distance_decoder, [criterion1, criterion2], optimizer, epoch)
-        mae_error = pretrain_validate(val_loader, encoder, comp_decoder, masker, distance_decoder, [criterion1, criterion2], optimizer)
+        pretrain(train_loader, encoder, comp_decoder, masker, cloud_decoder, [criterion1, criterion2], optimizer, epoch)
+        mae_error = pretrain_validate(val_loader, encoder, comp_decoder, masker, cloud_decoder, [criterion1, criterion2], optimizer)
         if mae_error != mae_error:
             print('Exit due to NaN')
             exit(1)
@@ -385,17 +396,18 @@ def main():
         #mb.matbench_dielectric,
         #mb.matbench_log_gvrh,
         #mb.matbench_log_kvrh,
-        mb.matbench_mp_gap,
-        #mb.matbench_phonons,
+        #mb.matbench_mp_gap,
+        mb.matbench_phonons,
     ]
     pset = p["pretrain"]
     hp_encoder = pset["hp"]
+    print(f"Using k: {pset['data_options']['k']}")
+    data_options = pset['data_options']
+    hp = pset["hp"]
+    training_options = pset["training_options"]
 
     for task in tasks:
-        pset = p[task.dataset_name]
-        training_options = pset["training_options"]
-        hp = pset["hp"]
-        data_options = pset["data_options"]
+
         task.load()
         for fold in task.folds:
             best_mae_error = 1e10
@@ -426,6 +438,7 @@ def main():
                                   hp_encoder["fea_len"],
                                   num_heads=hp_encoder["num_heads"],
                                   n_encoders=hp_encoder["num_encoders"])
+
             best_checkpoint = torch.load('encoder_best.pth.tar')
             encoder.load_state_dict(best_checkpoint['state_dict'])
             encoder.cuda()
@@ -465,5 +478,5 @@ def main():
 
 
 if __name__ == "__main__":
-    #main_pretrain()
+    main_pretrain()
     main()

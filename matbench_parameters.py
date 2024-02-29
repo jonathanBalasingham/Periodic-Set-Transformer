@@ -25,22 +25,22 @@ param_set0 = {
 
 param_set_pretrain = {
     "hp": {
-        "fea_len": 256,  # 64,
-        "num_heads": 1,
-        "num_encoders": 8,
+        "fea_len": 128,  # 64,
+        "num_heads": 4,
+        "num_encoders": 4,
         "num_decoder": 1
     },
     "training_options": {
         "lr": 1e-5,
         "wd": 0,
-        "lr_milestones": [400],
-        "epochs": 500,
+        "lr_milestones": [400, 800],
+        "epochs": 1000,
         "batch_size": 32,
         "val_ratio": 0.1,
         "cuda": True
     },
     "data_options": {
-        "k": 15,
+        "k": 30,
         "tol": 1e-4
     }
 }

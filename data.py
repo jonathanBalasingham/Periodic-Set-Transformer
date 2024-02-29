@@ -13,6 +13,7 @@ import random
 import functools
 import numpy as np
 import pickle
+from tqdm import tqdm
 
 from pdd_helpers import custom_PDD
 
@@ -98,20 +99,23 @@ def collate_pretrain_pool(dataset_list):
     batch_target = []
     batch_coords = []
     batch_cif_ids = []
+    clouds = []
 
-    for i, (structure_features, comp_features, cell_features, target, coords, cif_id) in enumerate(dataset_list):
+    for i, (structure_features, comp_features, cell_features, target, coords, cloud, cif_id) in enumerate(dataset_list):
         batch_fea.append(structure_features)
         composition_fea.append(comp_features)
         cell_fea.append(cell_features)
         batch_target.append(target)
         batch_cif_ids.append(cif_id)
         batch_coords.append(coords)
+        clouds.append(cloud)
 
     return (pad_sequence(batch_fea, batch_first=True),
             pad_sequence(composition_fea, batch_first=True),
             torch.stack(cell_fea, dim=0)), \
            (torch.stack(batch_target, dim=0),
-            pad_sequence(batch_coords, batch_first=True)), \
+            pad_sequence(batch_coords, batch_first=True),
+            pad_sequence(clouds, batch_first=True)), \
            batch_cif_ids
 
 
@@ -253,7 +257,7 @@ class PDDDataNormalized(Dataset):
 
 
 class PDDDataPymatgen(Dataset):
-    def __init__(self, structures, targets, k=60, collapse_tol=1e-4, composition=True, constrained=True, preprocess=True):
+    def __init__(self, structures, targets, k=60, collapse_tol=1e-4, composition=True, constrained=True, preprocess=False, collapse=False):
         k = int(k)
         self.k = k
         self.collapse_tol = float(collapse_tol)
@@ -267,7 +271,7 @@ class PDDDataPymatgen(Dataset):
         if preprocess:
             i = 0
             for ps in periodic_sets:
-                pdd, groups, inds, _ = custom_PDD(ps, k=self.k, collapse=True, collapse_tol=self.collapse_tol,
+                pdd, groups, inds, _ = custom_PDD(ps, k=self.k, collapse=collapse, collapse_tol=self.collapse_tol,
                                                   constrained=self.constrained, lexsort=False)
                 indices_in_graph = [i[0] for i in groups]
                 atom_features = ps.types[indices_in_graph][:, None]
@@ -313,7 +317,7 @@ class PDDDataPymatgen(Dataset):
 
 
 class PretrainData(Dataset):
-    def __init__(self, structures, k=12, collapse_tol=1e-4, composition=True, constrained=True):
+    def __init__(self, structures, k=12, collapse_tol=1e-4, composition=True, constrained=True, preprocess=False):
         k = int(k)
         self.k = k
         self.collapse_tol = float(collapse_tol)
@@ -321,14 +325,15 @@ class PretrainData(Dataset):
         self.composition = composition
         self.id_prop_data = np.array(structures.index)
         pdds = []
-        periodic_sets = [amd.periodicset_from_pymatgen_structure(s) for s in structures]
+        periodic_sets = [amd.periodicset_from_pymatgen_structure(s) for s in tqdm(structures, desc="Creating periodic sets..")]
         i = 0
         self.m = []
 
         self.cell_fea = [np.concatenate([np.sort(s.lattice.parameters[:3]), np.sort(s.lattice.parameters[3:])]) for s in
                          structures]
         self.neighbor_points = []
-        for ps in periodic_sets:
+        self.point_cloud = []
+        for ps in tqdm(periodic_sets, "Creating PDDs.."):
             pdd, groups, inds, cloud = custom_PDD(ps, k=self.k, collapse=False, collapse_tol=self.collapse_tol,
                                                   constrained=self.constrained, lexsort=False)
             indices_in_graph = [i[0] for i in groups]
@@ -339,17 +344,22 @@ class PretrainData(Dataset):
             self.m.append(pdd.shape[0])
             og = cloud[indices_in_graph]
             n_points = cloud[inds]
+            self.point_cloud.append(og)
             self.neighbor_points.append(np.hstack([og - n_points[:, i, :] for i in range(n_points.shape[1])]))
 
 
         self.m = np.array(self.m)[:, None]
-        min_pdd = np.min(np.vstack([np.min(pdd, axis=0) for pdd in pdds]), axis=0)
-        max_pdd = np.max(np.vstack([np.max(pdd, axis=0) for pdd in pdds]), axis=0)
-        self.pdds = [np.hstack(
-            [pdd[:, 0, None], (pdd[:, 1:-1] - min_pdd[1:-1]) / (max_pdd[1:-1] - min_pdd[1:-1])]) for
-            pdd
-            in pdds]
         self.atom_fea = [pdd[:, -1, None] for pdd in pdds]
+        if preprocess:
+            min_pdd = np.min(np.vstack([np.min(pdd, axis=0) for pdd in pdds]), axis=0)
+            max_pdd = np.max(np.vstack([np.max(pdd, axis=0) for pdd in pdds]), axis=0)
+            self.pdds = [np.hstack(
+                [pdd[:, 0, None], (pdd[:, 1:-1] - min_pdd[1:-1]) / (max_pdd[1:-1] - min_pdd[1:-1])]) for
+                pdd
+                in pdds]
+        else:
+            self.pdds = [pdd[:, :-1] for pdd in pdds]
+
 
     def __len__(self):
         return len(self.id_prop_data)
@@ -364,4 +374,5 @@ class PretrainData(Dataset):
                torch.Tensor(self.cell_fea[idx]), \
                torch.LongTensor([self.m[idx]]), \
                torch.Tensor(self.neighbor_points[idx]), \
+               torch.Tensor(self.point_cloud[idx]), \
                cif_id
