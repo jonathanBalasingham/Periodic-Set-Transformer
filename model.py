@@ -4,6 +4,7 @@ import json
 from WeightedBatchNorm1d import *
 import numpy as np
 import math
+import pandas as pd
 
 torch.manual_seed(0)
 
@@ -128,15 +129,15 @@ class PeriodicSetTransformerEncoder(nn.Module):
 class PeriodicSetTransformer(nn.Module):
 
     def __init__(self, str_fea_len, embed_dim, num_heads, n_encoders=3, decoder_layers=1, components=None,
-                 expansion_size=10, dropout=0., attention_dropout=0., use_cuda=True, atom_encoding="mat2vec",
+                 expansion_size=100, dropout=0., attention_dropout=0., use_cuda=torch.cuda.is_available(), atom_encoding="mat2vec",
                  use_weighted_attention=True, use_weighted_pooling=True, activation=nn.Mish, sigmoid_out=False,
-                 expand_distances=False):
+                 expand_distances=True):
         super(PeriodicSetTransformer, self).__init__()
         if components is None:
             components = ["pdd", "composition"]
 
         if atom_encoding not in ["mat2vec", "cgcnn"]:
-            raise ValueError(f"atom_encoding_dim must be in {['mat2vec', 'cgcnn']}")
+            raise ValueError(f"atom_encoding must be in {['mat2vec', 'cgcnn']}")
         else:
             atom_encoding_dim = 200 if atom_encoding == "mat2vec" else 92
             id_prop_file = "mat2vec.csv" if atom_encoding == "mat2vec" else "atom_init.json"
@@ -242,23 +243,33 @@ class PeSTEncoder(nn.Module):
 
 
 class AtomFeaturizer(nn.Module):
-    def __init__(self, id_prop_file="atom_init.json"):
+    def __init__(self, id_prop_file="atom_init.json", use_cuda=torch.cuda.is_available()):
         super(AtomFeaturizer, self).__init__()
-        with open(id_prop_file) as f:
-            atom_fea = json.load(f)
-        af = np.vstack([i for i in atom_fea.values()])
-        af = np.vstack([np.zeros(92), af, np.ones(92)])  # last is the mask, first is for padding
-        self.atom_fea = torch.Tensor(af).cuda()
+        if id_prop_file == "mat2vec.csv":
+            af = pd.read_csv("mat2vec.csv").to_numpy()[:, 1:].astype("float32")
+            af = np.vstack([np.zeros(200), af, np.ones(200)])
+        else:
+            with open(id_prop_file) as f:
+                atom_fea = json.load(f)
+            af = np.vstack([i for i in atom_fea.values()])
+            af = np.vstack([np.zeros(92), af, np.ones(92)])  # last is the mask, first is for padding
+        if use_cuda:
+            self.atom_fea = torch.Tensor(af).cuda()
+        else:
+            self.atom_fea = torch.Tensor(af)
 
     def forward(self, x):
         return torch.squeeze(self.atom_fea[x.long()])
 
 
 class DistanceExpansion(nn.Module):
-    def __init__(self, size=10):
+    def __init__(self, size=5, use_cuda=torch.cuda.is_available()):
         super(DistanceExpansion, self).__init__()
         self.size = size
-        self.starter = torch.Tensor([i for i in range(size)]).cuda()
+        if use_cuda:
+            self.starter = torch.Tensor([i for i in range(size)]).cuda()
+        else:
+            self.starter = torch.Tensor([i for i in range(size)])
         self.starter /= size
 
     def forward(self, x):

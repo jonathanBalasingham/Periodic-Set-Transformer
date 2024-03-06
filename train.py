@@ -18,7 +18,7 @@ from data import *
 from model import PeriodicSetTransformer
 
 
-def train(train_loader, model, criterion, optimizer, epoch, normalizer, cuda=True, print_freq=100):
+def train(train_loader, model, criterion, optimizer, epoch, normalizer, cuda=torch.cuda.is_available(), print_freq=100):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -36,7 +36,7 @@ def train(train_loader, model, criterion, optimizer, epoch, normalizer, cuda=Tru
             #input_var = Variable(input).cuda(non_blocking=True)
             input_var = [Variable(i).cuda(non_blocking=True) for i in input]
         else:
-            input_var = Variable(input)
+            input_var = [Variable(i) for i in input]
         # normalize target
         target_normed = normalizer.norm(target)
 
@@ -73,7 +73,7 @@ def train(train_loader, model, criterion, optimizer, epoch, normalizer, cuda=Tru
             )
 
 
-def validate(val_loader, model, criterion, normalizer, test=False, return_pred=False, cuda=True):
+def validate(val_loader, model, criterion, normalizer, test=False, return_pred=False, cuda=torch.cuda.is_available()):
     batch_time = AverageMeter()
     losses = AverageMeter()
     mae_errors = AverageMeter()
@@ -94,7 +94,7 @@ def validate(val_loader, model, criterion, normalizer, test=False, return_pred=F
                 input_var = [Variable(i).cuda(non_blocking=True) for i in input]
         else:
             with torch.no_grad():
-                input_var = Variable(input)
+                input_var = [Variable(i) for i in input]
         target_normed = normalizer.norm(target)
 
         if cuda:

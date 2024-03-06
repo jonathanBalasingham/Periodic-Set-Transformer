@@ -376,3 +376,51 @@ class PretrainData(Dataset):
                torch.Tensor(self.neighbor_points[idx]), \
                torch.Tensor(self.point_cloud[idx]), \
                cif_id
+
+
+
+class PDDDataPymatgen2(Dataset):
+    def __init__(self, structures, targets, k=500, collapse_tol=1e-4, composition=True, constrained=True, preprocess=False, collapse=True):
+        k = int(k)
+        self.k = k
+        self.collapse_tol = float(collapse_tol)
+        self.constrained = constrained
+        self.composition = composition
+        self.id_prop_data = targets
+        pdds = []
+        periodic_sets = [amd.periodicset_from_pymatgen_structure(s) for s in structures]
+        self.cell_fea = [np.concatenate([np.sort(s.lattice.parameters[:3]), np.sort(s.lattice.parameters[3:])]) for s in
+                         structures]
+
+        i = 0
+        atom_fea = []
+        for ps in periodic_sets:
+            pdd, groups, inds, _ = custom_PDD(ps, k=self.k, collapse=collapse, collapse_tol=self.collapse_tol,
+                                                constrained=self.constrained, lexsort=False)
+            indices_in_graph = [i[0] for i in groups]
+            atom_features = ps.types[indices_in_graph][:, None]
+            atom_fea.append(atom_features)
+            pdd = np.hstack([pdd[:, 0, None], 1 / np.sum(pdd[:, 1:], axis=1)[:, None]])
+            pdds.append(pdd)
+            i += 1
+
+        min_pdd = np.min(np.vstack([np.min(pdd, axis=0) for pdd in pdds]), axis=0)
+        max_pdd = np.max(np.vstack([np.max(pdd, axis=0) for pdd in pdds]), axis=0)
+        self.pdds = [np.hstack(
+            [pdd[:, 0, None], (pdd[:, 1:] - min_pdd[1:]) / (max_pdd[1:] - min_pdd[1:])]) for
+            pdd
+            in pdds]
+        print(self.pdds[0:3])
+        self.atom_fea = atom_fea
+
+    def __len__(self):
+        return len(self.id_prop_data)
+
+    @functools.lru_cache(maxsize=None)  # Cache loaded structures
+    def __getitem__(self, idx):
+        cif_id, target = self.id_prop_data.index[idx], self.id_prop_data.iloc[idx]
+        return torch.Tensor(self.pdds[idx]), \
+               torch.Tensor(self.atom_fea[idx]), \
+               torch.Tensor(self.cell_fea[idx]), \
+               torch.Tensor([float(target)]), \
+               cif_id

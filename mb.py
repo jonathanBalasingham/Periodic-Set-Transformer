@@ -20,9 +20,9 @@ tasks = [
     #mb.matbench_dielectric,
     #mb.matbench_log_gvrh,
     #mb.matbench_log_kvrh,
-    mb.matbench_mp_gap,
-    #mb.matbench_phonons,
-
+    #mb.matbench_mp_gap,
+    mb.matbench_phonons,
+    #mb.matbench_jdft2d
 ]
 
 for task in tasks:
@@ -58,7 +58,7 @@ for task in tasks:
         print(orig_atom_fea_len)
         print(dataset[0][1].shape[-1])
         sample_data_list = [dataset[i] for i in
-                            sample(range(train_outputs.shape[0]), 5000)]
+                            sample(range(train_outputs.shape[0]), train_outputs.shape[0])]
         _, sample_target, _ = collate_pool(sample_data_list)
         normalizer = Normalizer(sample_target)
         model = PeriodicSetTransformer(orig_atom_fea_len,
@@ -66,7 +66,8 @@ for task in tasks:
                                        num_heads=hp["num_heads"],
                                        n_encoders=hp["num_encoders"],
                                        decoder_layers=hp["num_decoder"])
-        model.cuda()
+        if torch.cuda.is_available():
+            model.cuda()
         criterion = nn.L1Loss()
         optimizer = optim.Adam(model.parameters(), training_options["lr"],
                                weight_decay=training_options["wd"])
@@ -74,7 +75,7 @@ for task in tasks:
                                 gamma=0.1)
         for epoch in range(training_options["epochs"]):
             train(train_loader, model, criterion, optimizer, epoch, normalizer)
-            mae_error = validate(val_loader, model, criterion, normalizer)
+            """mae_error = validate(val_loader, model, criterion, normalizer)
             if mae_error != mae_error:
                 print('Exit due to NaN')
                 exit(1)
@@ -87,9 +88,9 @@ for task in tasks:
                 'best_mae_error': best_mae_error,
                 'optimizer': optimizer.state_dict(),
                 'normalizer': normalizer.state_dict(),
-            }, is_best)
+            }, is_best)"""
         print('---------Evaluate Model on Test Set---------------')
-        best_checkpoint = torch.load('model_best.pth.tar')
+        #best_checkpoint = torch.load('model_best.pth.tar')
         #model.load_state_dict(best_checkpoint['state_dict'])
         predictions = validate(test_loader, model, criterion, normalizer, test=True, return_pred=True)
         task.record(fold, predictions)
@@ -102,40 +103,3 @@ my_metadata = {
 }
 mb.add_metadata(my_metadata)
 mb.to_file("results_bgap.json.gz")
-
-#print(mb.matbench_dielectric.scores)
-#print(mb.matbench_log_gvrh.scores)
-#print(mb.matbench_log_kvrh.scores)
-print(mb.matbench_mp_gap.scores)
-#print(mb.matbench_mp_e_form.scores)
-"""
-{'mean': 0.31757841981746765, 'max': 0.4169551713988986, 'min': 0.20061424914085754, 'std': 0.0788482182337675}
-k: 20 -> 15
-{'mean': 0.3112765913758775, 'max': 0.3957627440066206, 'min': 0.19629350897602024, 'std': 0.07300192363737683}
-{'mean': 0.07609896448077598, 'max': 0.08792050254177541, 'min': 0.06484200268928478, 'std': 0.009286048209177592}
-{'mean': 0.0561602938444685, 'max': 0.06291205018025409, 'min': 0.04968649112270194, 'std': 0.00507932268956125}
-k: 15 -> 10
-Nope, back to 15
-num_heads: 2 -> 4
-{'mean': 0.307351050042718, 'max': 0.40365942438514935, 'min': 0.19736206675822782, 'std': 0.07230566140343077}
-# BAND GAP
- {'mean': 0.2442376544787678, 'max': 0.2679554260349575, 'min': 0.21441741559763183, 'std': 0.020367514123334717}, 
- 'rmse': {'mean': 0.5187990349849143, 'max': 0.5818557557335512, 'min': 0.4714052581636044, 'std': 0.046720728105528624}, 
- 'mape': {'mean': 5.557214727414577, 'max': 8.449106351191956, 'min': 2.94907064505394, 'std': 2.007238344719603}, 
- 'max_error': {'mean': 6.905910924911498, 'max': 7.255345344543457, 'min': 6.505718231201172, 'std': 0.29371542373133436}}
-
-"""
-
-"""
-DIELECTRIC:
- 'mae': {'mean': 0.2442376544787678, 'max': 0.2679554260349575, 'min': 0.21441741559763183, 'std': 0.020367514123334717}, 
- 'rmse': {'mean': 0.5187990349849143, 'max': 0.5818557557335512, 'min': 0.4714052581636044, 'std': 0.046720728105528624},
- 'mape': {'mean': 5.557214727414577, 'max': 8.449106351191956, 'min': 2.94907064505394, 'std': 2.007238344719603}, 
- 'max_error': {'mean': 6.905910924911498, 'max': 7.255345344543457, 'min': 6.505718231201172, 'std': 0.29371542373133436}}
-
-# BAND GAP
- {'mean': 0.2442376544787678, 'max': 0.2679554260349575, 'min': 0.21441741559763183, 'std': 0.020367514123334717}, 
- 'rmse': {'mean': 0.5187990349849143, 'max': 0.5818557557335512, 'min': 0.4714052581636044, 'std': 0.046720728105528624}, 
- 'mape': {'mean': 5.557214727414577, 'max': 8.449106351191956, 'min': 2.94907064505394, 'std': 2.007238344719603}, 
- 'max_error': {'mean': 6.905910924911498, 'max': 7.255345344543457, 'min': 6.505718231201172, 'std': 0.29371542373133436}}
-"""
