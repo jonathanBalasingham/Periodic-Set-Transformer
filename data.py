@@ -356,21 +356,14 @@ class JarvisData(Dataset):
             structures = [structures[i] for i in ordered_inds]
             targets = [targets[i] for i in ordered_inds]
             jids = [jids[i] for i in ordered_inds]
+            print(jids[-len(test_inds):])
 
         self.jids = jids
         self.id_prop_data = targets
         pdds = []
         cache_file = os.path.basename(filepath) + "_ps"
-        if os.path.exists(cache_file):
-            periodic_sets, _, _ = pickle.load(open(cache_file, "rb"))
-            print(len(periodic_sets))
-        else:
-            periodic_sets = [amd.periodicset_from_pymatgen_structure(s) for s in structures]
-            pickle.dump(periodic_sets, open(cache_file, "wb"))
+        periodic_sets = [amd.periodicset_from_pymatgen_structure(s) for s in structures]
 
-        periodic_sets = [periodic_sets[i] for i in to_keep]
-        if not shuffle:
-            periodic_sets = [periodic_sets[i] for i in ordered_inds]
         self.cell_fea = [np.concatenate([np.sort(s.lattice.parameters[:3]), np.sort(s.lattice.parameters[3:])]) for s in
                          structures]
         atom_fea = []

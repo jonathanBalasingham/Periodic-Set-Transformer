@@ -22,6 +22,7 @@ def get_data(dataset_name="dft_3d_2021"):
     df = pd.DataFrame(d)
     df = df[properties]
     pickle.dump((a, df, jids), open(filename, "wb"))
+    return a, df, jids
     
     
 def get_old_data():

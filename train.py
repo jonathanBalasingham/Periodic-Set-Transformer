@@ -58,7 +58,7 @@ def train(train_loader, model, criterion, optimizer, epoch, normalizer, cuda=Tru
             )
 
 
-def validate(val_loader, model, criterion, normalizer, test=False, return_pred=False, cuda=True, return_target=False):
+def validate(val_loader, model, criterion, normalizer, test=False, return_pred=False, cuda=True, return_target=False, return_id=False):
     batch_time = AverageMeter()
     losses = AverageMeter()
     mae_errors = AverageMeter()
@@ -124,6 +124,8 @@ def validate(val_loader, model, criterion, normalizer, test=False, return_pred=F
                                                     mae_errors=mae_errors))
 
     if return_pred and return_target:
+        if return_id:
+            return test_preds, test_targets, test_cif_ids
         return test_preds, test_targets
     elif return_pred:
         return test_preds

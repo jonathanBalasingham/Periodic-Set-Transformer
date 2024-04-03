@@ -159,11 +159,12 @@ def main(verbose=True):
         #best_checkpoint = torch.load('model_best.pth.tar')
         #model.load_state_dict(best_checkpoint['state_dict'])
         pred_time_start = time.time()
-        predictions, test_targets = validate(test_loader, model, criterion, normalizer, test=True, return_pred=True,
-                                             cuda=use_cuda, return_target=True)
+        predictions, test_targets, ids = validate(test_loader, model, criterion, normalizer, test=True, return_pred=True,
+                                             cuda=use_cuda, return_target=True, return_id=True)
         pred_time_end = time.time()
         prediction_time = pred_time_end - pred_time_start
         pickle.dump((predictions, test_targets), open(f"./jarvis_results/{prop_name}_predictions", "wb"))
+        pd.DataFrame({"id": ids, "prediction": predictions, "target": test_targets}).to_csv(f"./jarvis_results/{prop_name}_results.csv", index=False)
         predictions = torch.Tensor(predictions)
         test_targets = torch.Tensor(test_targets)
         mean_absolute_error = mae(predictions, test_targets)
