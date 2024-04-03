@@ -64,6 +64,7 @@ def main(verbose=True):
     d = {"n": [], "MAE": [], "MSE": [], "RMSE": [], "MAPE": [], "MAD": [], "MAD:MAE": [], "Training time": [],
          "Prediction Time": []}
     props_to_run = [
+        "formation_energy_peratom",
         "exfoliation_energy",
         "dfpt_piezo_max_eij",
         "dfpt_piezo_max_dij",
@@ -73,7 +74,6 @@ def main(verbose=True):
         "slme",
         "spillage",
         "ehull",
-        "formation_energy_peratom",
         "optb88vdw_bandgap",
         "optb88vdw_total_energy",
     ]
