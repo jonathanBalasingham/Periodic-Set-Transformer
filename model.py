@@ -56,8 +56,6 @@ class MHA(nn.Module):
         d_k = q.size()[-1]
         attn_logits = torch.matmul(q, k.transpose(-2, -1))
         attn_logits = attn_logits / math.sqrt(d_k)
-        #if weights is not None:
-        #    attn_logits = attn_logits * weights
 
         if mask is not None:
             attn_logits = attn_logits.masked_fill(mask == 0, -9e15)
@@ -94,32 +92,77 @@ class MHA(nn.Module):
             return o
 
 
+
+class VectorAttention(nn.Module):
+    def __init__(
+        self,
+        embed_channels,
+        attention_dropout=0.0,
+        qkv_bias=True,
+        activation=nn.ReLU
+    ):
+        super(VectorAttention, self).__init__()
+        self.embed_channels = embed_channels
+        self.attn_drop_rate = attention_dropout
+        self.qkv_bias = qkv_bias
+
+        self.linear_q = nn.Sequential(
+            nn.Linear(embed_channels, embed_channels, bias=qkv_bias),
+            nn.LayerNorm(embed_channels),
+            activation(inplace=True),
+        )
+        self.linear_k = nn.Sequential(
+            nn.Linear(embed_channels, embed_channels, bias=qkv_bias),
+            nn.LayerNorm(embed_channels),
+            activation(inplace=True),
+        )
+
+        self.linear_v = nn.Linear(embed_channels, embed_channels, bias=qkv_bias)
+
+        self.weight_encoding = nn.Sequential(
+            nn.Linear(embed_channels, embed_channels),
+            nn.LayerNorm(embed_channels),
+            activation(inplace=True),
+            nn.Linear(embed_channels, embed_channels),
+        )
+        self.softmax = nn.Softmax(dim=1)
+        self.attn_drop = nn.Dropout(attention_dropout)
+
+    def forward(self, feat, distribution):
+        query, key, value = (
+            self.linear_q(feat),
+            self.linear_k(feat),
+            self.linear_v(feat),
+        )
+        relation_qk = key.unsqueeze(-3) - query.unsqueeze(-2)
+        weight = self.weight_encoding(relation_qk)
+        weight = self.attn_drop(weighted_softmax(weight, dim=-2, weights=distribution.unsqueeze(1)))
+
+        mask = (distribution * distribution.transpose(-1, -2)) > 0
+        weight = weight * mask.unsqueeze(-1)
+        feat = torch.einsum("b i j k, b j k -> b i k", weight, value)
+        return feat
+
+
+
 class PeriodicSetTransformerEncoder(nn.Module):
     def __init__(self, embedding_dim, num_heads, attention_dropout=0.0, dropout=0.0, activation=nn.Mish):
         super(PeriodicSetTransformerEncoder, self).__init__()
         self.embedding = nn.Linear(embedding_dim, embedding_dim * num_heads)
         self.out = nn.Linear(embedding_dim * num_heads, embedding_dim)
         self.multihead_attention = MHA(embedding_dim, embedding_dim * num_heads, num_heads, dropout=attention_dropout)
+        self.vector_attention = VectorAttention(embedding_dim,
+                                                attention_dropout=attention_dropout,
+                                                activation=activation)
         self.pre_norm = nn.LayerNorm(embedding_dim)
         self.ln = torch.nn.LayerNorm(embedding_dim)
-        self.dropout = nn.Dropout(p=dropout)
-        self.W_q = nn.Linear(embedding_dim, embedding_dim * num_heads)
-        self.W_k = nn.Linear(embedding_dim, embedding_dim * num_heads)
-        self.W_v = nn.Linear(embedding_dim, embedding_dim * num_heads)
         self.ffn = nn.Linear(embedding_dim, embedding_dim)
         self.ffn = nn.Sequential(nn.Linear(embedding_dim, embedding_dim),
                                  activation())
 
     def forward(self, x, weights, use_weights=True):
         x_norm = self.ln(x)
-        keep = weights > 0
-        keep = keep * torch.transpose(keep, -2, -1)
-
-        if use_weights:
-            att_output = self.multihead_attention(x_norm, weights=weights, mask=keep)
-        else:
-            att_output = self.multihead_attention(x_norm, mask=keep)
-
+        att_output = self.vector_attention(x_norm, weights)
         output1 = x + self.out(att_output)
         output2 = self.ln(output1)
         output2 = self.ffn(output2)
@@ -130,7 +173,8 @@ class PeriodicSetTransformer(nn.Module):
 
     def __init__(self, str_fea_len, embed_dim, num_heads, n_encoders=3, decoder_layers=1, components=None,
                  expansion_size=10, dropout=0., attention_dropout=0., use_cuda=True, atom_encoding="mat2vec",
-                 use_weighted_attention=True, use_weighted_pooling=True, activation=nn.Mish, sigmoid_out=False):
+                 use_weighted_attention=True, use_weighted_pooling=True, activation=nn.Mish, sigmoid_out=False,
+                 expand_distances=True):
         super(PeriodicSetTransformer, self).__init__()
         if components is None:
             components = ["pdd", "composition"]
@@ -145,12 +189,16 @@ class PeriodicSetTransformer(nn.Module):
         self.pdd_encoding = "pdd" in components
         self.use_weighted_attention = use_weighted_attention
         self.use_weighted_pooling = use_weighted_pooling
-
-        self.pdd_embedding_layer = nn.Linear((str_fea_len - 1) * expansion_size, embed_dim)
+        self.expand_distances = expand_distances
+        if self.expand_distances:
+            self.pdd_embedding_layer = nn.Linear((str_fea_len - 1) * expansion_size, embed_dim)
+        else:
+            print("Not expanding distances")
+            self.pdd_embedding_layer = nn.Linear(str_fea_len - 1, embed_dim)
         self.comp_embedding_layer = nn.Linear(atom_encoding_dim, embed_dim)
         self.dropout_layer = nn.Dropout(p=dropout)
         self.af = AtomFeaturizer(use_cuda=use_cuda, id_prop_file=id_prop_file)
-        self.de = DistanceExpansion(size=expansion_size, use_cuda=use_cuda)
+        self.de = DistanceExpansion(size=expansion_size, use_cuda=use_cuda, out_size=expansion_size*(str_fea_len-1))
         self.ln = nn.LayerNorm(embed_dim)
         self.ln2 = nn.LayerNorm(embed_dim)
         self.cell_embed = nn.Linear(6, 32)
@@ -173,7 +221,10 @@ class PeriodicSetTransformer(nn.Module):
         comp_features = self.comp_embedding_layer(comp_features)
         comp_features = self.dropout_layer(comp_features)
         str_features = str_fea[:, :, 1:]
-        str_features = self.pdd_embedding_layer(self.de(str_features))
+
+        if self.expand_distances:
+            str_features = self.de(str_features)
+        str_features = self.pdd_embedding_layer(str_features)
 
         if self.composition and self.pdd_encoding:
             x = comp_features + str_features
@@ -252,14 +303,18 @@ class AtomFeaturizer(nn.Module):
 
 
 class DistanceExpansion(nn.Module):
-    def __init__(self, size=5, use_cuda=True):
+    def __init__(self, size=5, use_cuda=True, out_size=150):
         super(DistanceExpansion, self).__init__()
         self.size = size
+        self.out_size = out_size
         if use_cuda:
             self.starter = torch.Tensor([i for i in range(size)]).cuda()
         else:
             self.starter = torch.Tensor([i for i in range(size)])
         self.starter /= size
+        self.lin = nn.Sequential(nn.Linear(1, size), nn.Mish())
+        self.lin2 = nn.Linear(out_size, out_size)
+        self.ln = nn.LayerNorm(size)
 
     def forward(self, x):
         out = (1 - (x.flatten().reshape((-1, 1)) - self.starter)) ** 2

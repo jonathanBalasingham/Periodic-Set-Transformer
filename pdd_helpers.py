@@ -116,26 +116,17 @@ def get_angles(motif, cloud, inds):
     angles = angles.reshape((motif.shape[0], len(vc)))
     return angles
 
+def phi(groups, inds, cloud, cell):
+    inds_in_cell = [i[0] for i in groups]
+    coords_in_cell = cloud[inds_in_cell]
+    ri_rj = coords_in_cell[:, None, :] - cloud[inds[inds_in_cell]]
+    term1 = np.pi * np.eye(3) * np.matmul(np.linalg.inv(cell), ri_rj[:, :, :, None])
+    sum_term1 = np.matmul(cell, np.sum(np.eye(3) * np.sin(term1) ** 2, axis=-2)[:, :, :, None])
+    return 1 / np.linalg.norm(np.squeeze(sum_term1), axis=-1)
 
-def angle_tensor(motif, cloud, inds):
-    """
-    Take a motif of size m,
-    The output should be a np.array of dim: (m, m, k)
 
-    ? Does which pair effect the angles?
-
-    """
-    motif_indices = np.array([i for i in range(motif.shape[0])])
-    # as a test consider p0 and p1 in the motif
-    p0 = motif[0]
-    p1 = motif[1]
-    # an alternate p1 would be where inds % motif.shape[0] == 1
-    reduced_indices = inds % motif.shape[0]
-    alternate_p1 = cloud[inds][2][2]
-    # okay we have two points in the motif...
-    # how do we decide which angles are included
-
-    # OPTION 1: Use the k-NN in inds
-
-    # OPTION 2: The PDD(S; k) approach where we find exactly k angles
+def coulomb_matrix(ps, pdd, inds, groups):
+    to_keep = [i[0] for i in groups]
+    c = ps.types[to_keep, None] * ps.types[inds[to_keep] % len(groups)] / pdd[:, 1:]
+    return np.hstack([pdd[:, 0:1], c])
 

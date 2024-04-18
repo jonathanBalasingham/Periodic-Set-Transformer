@@ -17,7 +17,9 @@ import numpy as np
 import pickle
 from tqdm import tqdm
 
-from pdd_helpers import custom_PDD
+from jarvis.db.figshare import data as jdata
+from jarvis.core.atoms import Atoms
+from pdd_helpers import custom_PDD, phi, coulomb_matrix
 
 random.seed(0)
 
@@ -318,7 +320,7 @@ class PDDDataPymatgen(Dataset):
 
 import json
 
-class JarvisData(Dataset):
+class JarvisData2(Dataset):
     def __init__(self, filepath, prop, k=15, collapse_tol=1e-4, composition=True, constrained=True, collapse=True, shuffle=False):
         structures, props, jids = pickle.load(open(filepath, "rb"))
 
@@ -373,6 +375,84 @@ class JarvisData(Dataset):
             ps = periodic_sets[i]
             pdd, groups, inds, _ = custom_PDD(ps, k=self.k, collapse=collapse, collapse_tol=self.collapse_tol,
                                               constrained=self.constrained, lexsort=False)
+            indices_in_graph = [i[0] for i in groups]
+            atom_features = ps.types[indices_in_graph][:, None]
+            atom_fea.append(atom_features)
+            pdds.append(pdd)
+
+        self.pdds = preprocess_pdds(pdds)
+        self.atom_fea = atom_fea
+
+    def __len__(self):
+        return len(self.id_prop_data)
+
+    @functools.lru_cache(maxsize=None)  # Cache loaded structures
+    def __getitem__(self, idx):
+        cif_id, target = self.jids[idx], self.id_prop_data[idx]
+        return torch.Tensor(self.pdds[idx]), \
+            torch.Tensor(self.atom_fea[idx]), \
+            torch.Tensor(self.cell_fea[idx]), \
+            torch.Tensor([float(target)]), \
+            cif_id
+
+
+
+class JarvisData(Dataset):
+    def __init__(self, prop, k=15, collapse_tol=1e-4, composition=True, constrained=True, collapse=True, shuffle=False):
+        d = jdata("dft_3d_2021")
+        jids = [i['jid'] for i in d]
+        targets = [i[prop] for i in d]
+        structures = [Atoms.from_dict(i['atoms']).pymatgen_converter() for i in d]
+
+        to_keep = [i for i in range(len(targets)) if targets[i] != "na"]
+        if shuffle:
+            random.seed(123)
+            random.shuffle(to_keep)
+        else:
+            test_ids = json.load(open(f"./mf/{prop}/ids_train_val_test.json", "r"))["id_test"]
+
+        print(f"Dataset of size: {len(to_keep)}")
+        structures = [structures[i] for i in to_keep]
+        targets = [float(targets[i]) for i in to_keep]
+        jids = [jids[i] for i in to_keep]
+
+        self.k = int(k)
+        self.collapse_tol = float(collapse_tol)
+        self.constrained = constrained
+        self.composition = composition
+
+        if not shuffle:
+            train_inds = []
+            test_inds = []
+            for i, jid in enumerate(jids):
+                if jid in test_ids:
+                    test_inds.append(i)
+                else:
+                    train_inds.append(i)
+
+            print(f"Total size: {len(jids)}")
+            print(f"Train size: {len(train_inds)}")
+            print(f"Test size: {len(test_inds)}")
+            ordered_inds = train_inds + test_inds
+            structures = [structures[i] for i in ordered_inds]
+            targets = [targets[i] for i in ordered_inds]
+            jids = [jids[i] for i in ordered_inds]
+
+        self.jids = jids
+        self.id_prop_data = targets
+        pdds = []
+        periodic_sets = [amd.periodicset_from_pymatgen_structure(s) for s in structures]
+
+        self.cell_fea = [np.concatenate([np.sort(s.lattice.parameters[:3]), np.sort(s.lattice.parameters[3:])]) for s in
+                         structures]
+        atom_fea = []
+        for i in tqdm(range(len(periodic_sets)),
+                      desc="Creating PDDs…",
+                      ascii=False, ncols=75):
+            ps = periodic_sets[i]
+            pdd, groups, inds, cloud = custom_PDD(ps, k=self.k, collapse=True, collapse_tol=self.collapse_tol,
+                                              constrained=self.constrained, lexsort=False)
+
             indices_in_graph = [i[0] for i in groups]
             atom_features = ps.types[indices_in_graph][:, None]
             atom_fea.append(atom_features)
