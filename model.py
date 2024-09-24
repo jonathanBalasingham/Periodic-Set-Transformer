@@ -146,10 +146,17 @@ class VectorAttention(nn.Module):
 
 
 class PeriodicSetTransformerEncoder(nn.Module):
-    def __init__(self, embedding_dim, num_heads, attention_dropout=0.0, dropout=0.0, activation=nn.Mish):
+    def __init__(self, embedding_dim, num_heads, attention_dropout=0.0, dropout=0.0, activation=nn.Mish, use_va=False):
         super(PeriodicSetTransformerEncoder, self).__init__()
-        self.embedding = nn.Linear(embedding_dim, embedding_dim * num_heads)
-        self.out = nn.Linear(embedding_dim * num_heads, embedding_dim)
+        if use_va:
+            self.embedding = nn.Linear(embedding_dim, embedding_dim)
+            self.out = nn.Linear(embedding_dim, embedding_dim)
+        else:
+            self.embedding = nn.Linear(embedding_dim, embedding_dim * num_heads)
+            self.out = nn.Linear(embedding_dim * num_heads, embedding_dim)
+        
+        self.use_va = use_va
+
         self.multihead_attention = MHA(embedding_dim, embedding_dim * num_heads, num_heads, dropout=attention_dropout)
         self.vector_attention = VectorAttention(embedding_dim,
                                                 attention_dropout=attention_dropout,
@@ -162,7 +169,10 @@ class PeriodicSetTransformerEncoder(nn.Module):
 
     def forward(self, x, weights, use_weights=True):
         x_norm = self.ln(x)
-        att_output = self.vector_attention(x_norm, weights)
+        if self.use_va:
+            att_output = self.vector_attention(x_norm, weights)
+        else:
+            att_output = self.multihead_attention(x_norm, weights)
         output1 = x + self.out(att_output)
         output2 = self.ln(output1)
         output2 = self.ffn(output2)
